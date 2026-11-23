@@ -1,0 +1,17 @@
+[Unit]
+Description=omarchy-drive: sincronização de Google Drive e OneDrive
+After=network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omarchy-drive daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+Nice=10
+IOSchedulingClass=idle
+Environment=OMARCHY_DRIVE_LOG=info
+
+[Install]
+WantedBy=default.target

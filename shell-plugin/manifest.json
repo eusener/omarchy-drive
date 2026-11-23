@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy-drive.status",
+  "name": "Drive Sync",
+  "version": "0.1.0",
+  "author": "omarchy-drive",
+  "license": "MIT",
+  "description": "Status, progress and conflicts of omarchy-drive (Google Drive and OneDrive sync) in the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "Drive Sync",
+    "description": "Google Drive and OneDrive sync status, pause/resume and open folders.",
+    "category": "Files",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {},
+    "schema": []
+  }
+}

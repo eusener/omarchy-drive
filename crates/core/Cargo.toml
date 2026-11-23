@@ -1,0 +1,27 @@
+[package]
+name = "omarchy-drive-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+tracing.workspace = true
+md-5.workspace = true
+sha2.workspace = true
+base64.workspace = true
+globset.workspace = true
+directories.workspace = true
+url.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

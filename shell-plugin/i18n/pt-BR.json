@@ -1,0 +1,21 @@
+{
+  "title": "Drive Sync",
+  "state.idle": "Em dia",
+  "state.syncing": "Sincronizando…",
+  "state.paused": "Pausado",
+  "state.offline": "Offline",
+  "state.error": "Erro",
+  "state.needs_confirm": "Aguardando confirmação",
+  "state.stopped": "Daemon parado",
+  "noPairs": "Nenhuma pasta configurada. Rode: omarchy-drive pair add",
+  "stoppedHint": "Inicie com: systemctl --user enable --now omarchy-drive",
+  "lastSync": "Última sincronização %1",
+  "queued": { "one": "falta %1 item", "other": "faltam %1 itens" },
+  "conflicts": { "one": "%1 conflito, as duas versões foram mantidas", "other": "%1 conflitos, as duas versões foram mantidas" },
+  "heldDeletes": { "one": "%1 exclusão retida. Pressione C para confirmar", "other": "%1 exclusões retidas. Pressione C para confirmar" },
+  "storage": "%1 de %2 usados",
+  "syncNow": "Sincronizar agora (S)",
+  "pause": "Pausar (P)",
+  "resume": "Retomar (P)",
+  "openFolder": "Abrir pasta (O)"
+}

@@ -1,0 +1,21 @@
+{
+  "title": "Drive Sync",
+  "state.idle": "Up to date",
+  "state.syncing": "Syncing…",
+  "state.paused": "Paused",
+  "state.offline": "Offline",
+  "state.error": "Error",
+  "state.needs_confirm": "Waiting for confirmation",
+  "state.stopped": "Daemon not running",
+  "noPairs": "No folders configured. Run: omarchy-drive pair add",
+  "stoppedHint": "Start it with: systemctl --user enable --now omarchy-drive",
+  "lastSync": "Last sync %1",
+  "queued": { "one": "%1 item left", "other": "%1 items left" },
+  "conflicts": { "one": "%1 conflict, both versions kept", "other": "%1 conflicts, both versions kept" },
+  "heldDeletes": { "one": "%1 deletion held. Press C to confirm", "other": "%1 deletions held. Press C to confirm" },
+  "storage": "%1 of %2 used",
+  "syncNow": "Sync now (S)",
+  "pause": "Pause (P)",
+  "resume": "Resume (P)",
+  "openFolder": "Open folder (O)"
+}
