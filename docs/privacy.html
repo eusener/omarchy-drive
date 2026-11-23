@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de privacidade · omarchy-drive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>Política de privacidade</h1>
+  <p class="lead">omarchy-drive · última atualização: 23 de novembro de 2026</p>
+
+  <h2>Resumo</h2>
+  <p>O omarchy-drive é um programa que roda no seu computador. Ele não tem servidor, não coleta dados, não usa análise de uso nem publicidade, e não envia nada a terceiros. Os seus arquivos trafegam só entre o seu computador e o seu provedor (Google ou Microsoft).</p>
+
+  <h2>Dados que o programa acessa</h2>
+  <ul>
+    <li><strong>Arquivos e metadados do Drive</strong> (nomes, pastas, tamanhos, datas, hashes): para comparar com a pasta local e copiar as mudanças nos dois sentidos. É para isso que serve o escopo de acesso ao Drive.</li>
+    <li><strong>Endereço de e-mail da conta</strong>: para identificar a conta no painel e evitar que uma conta seja trocada por outra por engano.</li>
+  </ul>
+
+  <h2>Onde os dados ficam</h2>
+  <ul>
+    <li>Os tokens de acesso ficam no seu computador, no chaveiro do sistema ou num arquivo legível só pelo seu usuário.</li>
+    <li>O estado da sincronização (lista de arquivos já sincronizados) fica num banco local, na sua pasta de usuário.</li>
+    <li>Nenhum dado é enviado ao autor do programa nem a qualquer outro servidor além das APIs do Google e da Microsoft.</li>
+  </ul>
+
+  <h2>Uso limitado dos dados do Google</h2>
+  <p>O uso e a transferência de informações recebidas das APIs do Google pelo omarchy-drive seguem a <a href="https://developers.google.com/terms/api-services-user-data-policy">Política de dados do usuário dos serviços de API do Google</a>, incluindo os requisitos de Uso Limitado. Os dados são usados só para oferecer a sincronização que você configurou: não são vendidos, não são usados para publicidade e não são lidos por pessoas.</p>
+
+  <h2>Como revogar o acesso</h2>
+  <ul>
+    <li>No painel do omarchy-drive, use "Desconectar", ou rode <code>omarchy-drive account remove &lt;conta&gt;</code>. Isso apaga os tokens do seu computador.</li>
+    <li>No Google: <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Na Microsoft: <a href="https://account.live.com/consent/Manage">account.live.com/consent/Manage</a>.</li>
+  </ul>
+  <p>Desconectar não apaga arquivos, nem no computador nem no Drive.</p>
+
+  <h2>Contato</h2>
+  <p>Dúvidas e problemas: <a href="https://github.com/eusener/omarchy-drive/issues">issues do projeto no GitHub</a>.</p>
+
+  <footer><a href="index.html">omarchy-drive</a></footer>
+</main>
+</body>
+</html>
