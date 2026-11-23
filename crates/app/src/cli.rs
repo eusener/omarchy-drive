@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use omarchy_drive_core::config::{Account, Config, Dirs, ProviderKind, SyncPair, expand_tilde};
+use omarchy_drive_core::config::{Config, Dirs, ProviderKind, SyncPair, expand_tilde};
 use omarchy_drive_core::engine::PairEngine;
-use omarchy_drive_core::oauth;
 use omarchy_drive_core::state::State;
 use omarchy_drive_core::status::{PairState, StatusDoc, StatusHub};
 
 use crate::ipc::{self, Request};
+use crate::auth_flow::{self, Target};
 use crate::{daemon, providers};
 
 #[derive(Parser)]
@@ -83,15 +83,36 @@ enum SetupCmd {
 
 #[derive(Subcommand)]
 enum AccountCmd {
-    /// Autoriza uma conta pelo navegador.
+    /// Conecta uma conta pelo navegador; o nome vem do e-mail. Se a conta já
+    /// existir, só renova o login.
+    Connect {
+        #[arg(long, value_enum)]
+        provider: ProviderArg,
+    },
+    /// Cancela uma autorização em andamento.
+    Cancel,
+    /// Autoriza uma conta pelo navegador, com nome escolhido.
     Add {
         name: String,
         #[arg(long, value_enum)]
         provider: ProviderArg,
     },
+    /// Autoriza de novo uma conta existente (token vencido ou revogado), sem mexer nos pares.
+    Reauth {
+        name: String,
+        /// Aceita uma conta do provedor diferente da autorizada antes.
+        #[arg(long)]
+        force: bool,
+    },
     List,
-    /// Remove a conta e seus tokens (pares da conta precisam ser removidos antes).
-    Remove { name: String },
+    /// Remove a conta e seus tokens. Sem `--with-pairs`, recusa se a conta
+    /// ainda tiver pares; com a flag, remove os pares junto (as pastas e os
+    /// arquivos locais e remotos são mantidos).
+    Remove {
+        name: String,
+        #[arg(long)]
+        with_pairs: bool,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -142,6 +163,14 @@ fn load() -> Result<(Dirs, Config)> {
     Ok((dirs, cfg))
 }
 
+/// Apaga o estado SQLite de um par removido.
+fn remove_pair_db(dirs: &Dirs, pair: &str) {
+    let db = dirs.pair_db(pair);
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", db.display()));
+    }
+}
+
 /// Avisa o daemon (se estiver rodando) que a configuração mudou.
 async fn notify_reload(dirs: &Dirs) {
     if dirs.socket().exists() {
@@ -174,46 +203,57 @@ pub async fn run(cli: Cli) -> Result<()> {
             println!("Credenciais salvas em {}", dirs.config_file().display());
         }
 
+        Cmd::Account(AccountCmd::Connect { provider }) => {
+            println!("{}", auth_flow::run(provider.into(), Target::Connect).await?);
+        }
+        Cmd::Account(AccountCmd::Cancel) => {
+            if auth_flow::cancel()? {
+                println!("Autorização cancelada.");
+            } else {
+                println!("Nenhuma autorização em andamento.");
+            }
+        }
         Cmd::Account(AccountCmd::Add { name, provider }) => {
-            let (dirs, mut cfg) = load()?;
-            if cfg.account(&name).is_some() {
-                bail!("já existe uma conta chamada {name}");
-            }
-            let kind: ProviderKind = provider.into();
-            let ep = providers::endpoints(&cfg, kind)?;
-            let tokens = oauth::authorize_interactive(&ep).await?;
-            oauth::save_tokens(&dirs.token_file(&name), &tokens)?;
-            let mut account = Account { name: name.clone(), provider: kind, label: String::new() };
-            match providers::account_email(&cfg, &dirs, &account).await {
-                Ok(email) => account.label = email,
-                Err(e) => eprintln!("aviso: não foi possível obter o e-mail da conta: {e:#}"),
-            }
-            println!("Conta {name} ({kind}) autorizada: {}", account.label);
-            cfg.accounts.push(account);
-            cfg.save(&dirs.config_file())?;
+            println!("{}", auth_flow::run(provider.into(), Target::Add(name)).await?);
+        }
+        Cmd::Account(AccountCmd::Reauth { name, force }) => {
+            let (_, cfg) = load()?;
+            let kind = cfg.account(&name).with_context(|| format!("conta {name} não encontrada"))?.provider;
+            println!("{}", auth_flow::run(kind, Target::Reauth { name, force }).await?);
         }
         Cmd::Account(AccountCmd::List) => {
             let (_, cfg) = load()?;
             if cfg.accounts.is_empty() {
-                println!("Nenhuma conta. Use `omarchy-drive account add <nome> --provider gdrive|onedrive`.");
+                println!("Nenhuma conta. Use `omarchy-drive account connect --provider gdrive|onedrive` ou o painel da barra.");
             }
             for a in &cfg.accounts {
                 println!("{:<16} {:<9} {}", a.name, a.provider.to_string(), a.label);
             }
         }
-        Cmd::Account(AccountCmd::Remove { name }) => {
+        Cmd::Account(AccountCmd::Remove { name, with_pairs }) => {
             let (dirs, mut cfg) = load()?;
-            if let Some(p) = cfg.pairs.iter().find(|p| p.account == name) {
-                bail!("a conta ainda é usada pelo par {}; remova-o antes", p.name);
+            anyhow::ensure!(cfg.account(&name).is_some(), "conta {name} não encontrada");
+            let pairs: Vec<String> =
+                cfg.pairs.iter().filter(|p| p.account == name).map(|p| p.name.clone()).collect();
+            if !pairs.is_empty() && !with_pairs {
+                bail!(
+                    "a conta ainda é usada por: {}. Remova os pares antes ou use --with-pairs",
+                    pairs.join(", ")
+                );
             }
-            let before = cfg.accounts.len();
+            cfg.pairs.retain(|p| p.account != name);
             cfg.accounts.retain(|a| a.name != name);
-            if cfg.accounts.len() == before {
-                bail!("conta {name} não encontrada");
+            cfg.save(&dirs.config_file())?;
+            for p in &pairs {
+                remove_pair_db(&dirs, p);
             }
             let _ = std::fs::remove_file(dirs.token_file(&name));
-            cfg.save(&dirs.config_file())?;
-            println!("Conta {name} removida.");
+            notify_reload(&dirs).await;
+            if pairs.is_empty() {
+                println!("Conta {name} removida.");
+            } else {
+                println!("Conta {name} removida com os pares {} (arquivos mantidos nos dois lados).", pairs.join(", "));
+            }
         }
 
         Cmd::Pair(PairCmd::Add { name, account, local, remote, include, ignore, download_only }) => {
@@ -281,10 +321,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 bail!("par {name} não encontrado");
             }
             cfg.save(&dirs.config_file())?;
-            let db = dirs.pair_db(&name);
-            for ext in ["", "-wal", "-shm"] {
-                let _ = std::fs::remove_file(format!("{}{ext}", db.display()));
-            }
+            remove_pair_db(&dirs, &name);
             println!("Par {name} removido (arquivos mantidos nos dois lados).");
             notify_reload(&dirs).await;
         }
@@ -408,6 +445,7 @@ fn print_status(d: &StatusDoc) {
             PairState::Offline => "offline",
             PairState::Error => "erro",
             PairState::NeedsConfirm => "aguardando confirmação",
+            PairState::AuthExpired => "login expirado",
         };
         println!("● {name} [{}] — {state}", p.provider);
         println!("  {} ↔ /{}", p.local, p.remote);

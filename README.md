@@ -57,11 +57,18 @@ usuário e o plugin em `~/.config/omarchy/plugins/omarchy-drive.status`.
 Os apps pagos usam um client OAuth próprio, já verificado pelo Google e pela Microsoft.
 Aqui você usa o seu.
 
+**Client padrão (opcional).** Quem compila pode embutir um client no binário: copie
+`packaging/oauth.env.example` para `packaging/oauth.env` (fora do git), preencha e rode
+`./install.sh`. Com ele, "Conectar Google Drive" no painel funciona sem `setup`. Um client
+configurado com `setup` tem prioridade para contas novas, e cada conta continua usando o client
+que a autorizou (campo `client_id` da conta no `config.toml`).
+
 **Google Drive**
 
 1. Acesse <https://console.cloud.google.com/>, crie um projeto e ative a **Google Drive API**.
 2. Em *Google Auth Platform → Público-alvo*, adicione o seu e-mail como usuário de teste.
-   Num app não publicado, o refresh token **expira em 7 dias**. Para uso contínuo, publique
+   Num app não publicado, o refresh token **expira em 7 dias** (renove com
+   `omarchy-drive account reauth <conta>`). Para uso contínuo, publique
    o app ("Em produção"). Sem verificação, ele funciona para até 100 usuários, com um aviso
    de "app não verificado".
 3. Em *Clientes → Criar cliente*, escolha o tipo **App para computador**.
@@ -79,8 +86,11 @@ Aqui você usa o seu.
 ## Uso
 
 ```bash
-omarchy-drive account add pessoal  --provider gdrive     # abre o navegador
-omarchy-drive account add trabalho --provider onedrive
+omarchy-drive account connect --provider gdrive         # abre o navegador; nome vem do e-mail
+omarchy-drive account add trabalho --provider onedrive   # o mesmo, escolhendo o nome
+omarchy-drive account reauth pessoal                     # token vencido/revogado; pares intactos
+omarchy-drive account cancel                             # cancela uma autorização em andamento
+omarchy-drive account remove pessoal --with-pairs        # remove conta e pares; arquivos ficam
 
 omarchy-drive pair add drive    --account pessoal  --local ~/GoogleDrive
 omarchy-drive pair add docs     --account trabalho --local ~/OneDrive/Docs --remote Documentos

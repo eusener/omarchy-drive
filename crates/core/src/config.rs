@@ -29,6 +29,10 @@ pub struct Account {
     /// E-mail/identificação mostrada no status.
     #[serde(default)]
     pub label: String,
+    /// Client OAuth que autorizou a conta. Contas antigas não têm o campo e
+    /// usam o client de `[oauth]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +174,47 @@ impl Config {
     pub fn pair(&self, name: &str) -> Option<&SyncPair> {
         self.pairs.iter().find(|p| p.name == name)
     }
+
+    /// Conta já configurada do mesmo provedor com este e-mail.
+    pub fn account_by_email(&self, provider: ProviderKind, email: &str) -> Option<&Account> {
+        self.accounts
+            .iter()
+            .find(|a| a.provider == provider && !a.label.is_empty() && a.label.eq_ignore_ascii_case(email))
+    }
+
+    /// Nome único para uma conta nova, derivado do e-mail: a parte antes do
+    /// `@` em minúsculas, só letras, dígitos e hífen (`joao`, `joao-2`, ...).
+    pub fn account_name_for(&self, email: &str) -> String {
+        let base = account_slug(email);
+        if self.account(&base).is_none() {
+            return base;
+        }
+        (2..).map(|n| format!("{base}-{n}")).find(|n| self.account(n).is_none()).unwrap()
+    }
+}
+
+fn account_slug(email: &str) -> String {
+    let local = email.split('@').next().unwrap_or_default();
+    let mut out = String::new();
+    for c in local.chars().flat_map(char::to_lowercase) {
+        let c = match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            'ñ' => 'n',
+            c => c,
+        };
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "conta".into() } else { out }
 }
 
 pub fn expand_tilde(p: &Path) -> PathBuf {
@@ -179,4 +224,44 @@ pub fn expand_tilde(p: &Path) -> PathBuf {
         return base.home_dir().join(rest);
     }
     p.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_with(names: &[&str]) -> Config {
+        let mut c = Config::default();
+        for n in names {
+            c.accounts.push(Account {
+                name: (*n).into(),
+                provider: ProviderKind::Gdrive,
+                label: format!("{n}@x.com"),
+                client_id: None,
+            });
+        }
+        c
+    }
+
+    #[test]
+    fn nome_da_conta_a_partir_do_email() {
+        let c = cfg_with(&[]);
+        assert_eq!(c.account_name_for("Joao.Silva@gmail.com"), "joao-silva");
+        assert_eq!(c.account_name_for("joão_çá+drive@x.com"), "joao-ca-drive");
+        assert_eq!(c.account_name_for("..@x.com"), "conta");
+        assert_eq!(c.account_name_for("semarroba"), "semarroba");
+    }
+
+    #[test]
+    fn nome_em_uso_ganha_sufixo() {
+        let c = cfg_with(&["joao", "joao-2"]);
+        assert_eq!(c.account_name_for("joao@outro.com"), "joao-3");
+    }
+
+    #[test]
+    fn conta_existente_pelo_email() {
+        let c = cfg_with(&["joao"]);
+        assert!(c.account_by_email(ProviderKind::Gdrive, "JOAO@x.com").is_some());
+        assert!(c.account_by_email(ProviderKind::Onedrive, "joao@x.com").is_none());
+    }
 }

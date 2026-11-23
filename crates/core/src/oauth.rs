@@ -39,6 +39,49 @@ struct TokenResponse {
     expires_in: Option<u64>,
 }
 
+/// Erros de autenticação que exigem ação do usuário (reautorizar).
+#[derive(Debug)]
+pub enum AuthError {
+    /// O provedor recusou o refresh token (vencido, revogado ou senha trocada).
+    Expired(String),
+}
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthError::Expired(detail) => write!(
+                f,
+                "login expirado: reautorize a conta pelo painel ou com `omarchy-drive account reauth <conta>` ({detail})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AuthError {}
+
+/// `true` se a cadeia de erros contém um login expirado.
+pub fn is_auth_expired(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| matches!(c.downcast_ref::<AuthError>(), Some(AuthError::Expired(_))))
+}
+
+/// Classifica a resposta de erro da renovação: `invalid_grant` (Google e
+/// Microsoft) e `interaction_required` (Microsoft) significam que só um novo
+/// login resolve; o resto é tratado como falha transitória.
+fn refresh_failure(status: u16, body: &str) -> anyhow::Error {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
+        .unwrap_or_default();
+    if matches!(status, 400 | 401) && matches!(code.as_str(), "invalid_grant" | "interaction_required") {
+        let desc = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.get("error_description").and_then(|e| e.as_str()).map(str::to_owned))
+            .unwrap_or(code);
+        return AuthError::Expired(desc).into();
+    }
+    anyhow::anyhow!("renovação do token falhou (HTTP {status}): {body}")
+}
+
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -98,7 +141,7 @@ pub async fn authorize_interactive(ep: &OAuthEndpoints) -> Result<TokenSet> {
             continue;
         }
         let (ok, body) = match (params.get("code"), params.get("state"), params.get("error")) {
-            (Some(c), Some(s), None) if *s == state => (Some(c.clone()), "Autorizado! Pode fechar esta aba e voltar ao terminal."),
+            (Some(c), Some(s), None) if *s == state => (Some(c.clone()), "Autorizado! Pode fechar esta aba."),
             (_, _, Some(_)) => (None, "Autorização negada. Pode fechar esta aba."),
             _ => (None, "Resposta inválida (state não confere)."),
         };
@@ -161,7 +204,7 @@ pub struct TokenManager {
 impl TokenManager {
     pub fn load(ep: OAuthEndpoints, path: PathBuf) -> Result<Self> {
         let raw = std::fs::read(&path).with_context(|| {
-            format!("conta não autorizada ({}). Rode `omarchy-drive account add`", path.display())
+            format!("conta não autorizada ({}). Rode `omarchy-drive account add` ou `account reauth`", path.display())
         })?;
         let tokens: TokenSet = serde_json::from_slice(&raw)?;
         Ok(Self { ep, path, http: reqwest::Client::new(), tokens: tokio::sync::Mutex::new(tokens) })
@@ -195,10 +238,8 @@ impl TokenManager {
         }
         let resp = self.http.post(&self.ep.token_url).form(&form).send().await?;
         if !resp.status().is_success() {
-            bail!(
-                "renovação do token falhou (reautorize com `omarchy-drive account add`): {}",
-                resp.text().await.unwrap_or_default()
-            );
+            let status = resp.status().as_u16();
+            return Err(refresh_failure(status, &resp.text().await.unwrap_or_default()));
         }
         let r: TokenResponse = resp.json().await?;
         t.access_token = r.access_token;
@@ -208,5 +249,67 @@ impl TokenManager {
         }
         t.expires_at = now() + r.expires_in.unwrap_or(3600);
         save_tokens(&self.path, t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Servidor HTTP mínimo que responde sempre `status` com `body`.
+    async fn fake_token_server(status: u16, body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = vec![0u8; 8192];
+                let _ = sock.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/token")
+    }
+
+    fn manager(token_url: String, dir: &std::path::Path) -> TokenManager {
+        let path = dir.join("t.json");
+        save_tokens(&path, &TokenSet { access_token: "a".into(), refresh_token: "r".into(), expires_at: 0 }).unwrap();
+        let ep = OAuthEndpoints {
+            auth_url: "http://127.0.0.1/auth".into(),
+            token_url,
+            client_id: "id".into(),
+            client_secret: None,
+            scopes: vec![],
+            redirect_host: "127.0.0.1".into(),
+            extra_auth_params: vec![],
+        };
+        TokenManager::load(ep, path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn invalid_grant_vira_login_expirado() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = fake_token_server(400, r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#).await;
+        let err = manager(url, dir.path()).access_token().await.unwrap_err();
+        assert!(is_auth_expired(&err), "{err:#}");
+        assert!(format!("{err:#}").contains("expired or revoked"));
+    }
+
+    #[tokio::test]
+    async fn erro_de_servidor_nao_e_login_expirado() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = fake_token_server(503, r#"{"error":"backend_error"}"#).await;
+        let err = manager(url, dir.path()).access_token().await.unwrap_err();
+        assert!(!is_auth_expired(&err), "{err:#}");
+    }
+
+    #[test]
+    fn classificacao_microsoft() {
+        assert!(is_auth_expired(&refresh_failure(400, r#"{"error":"interaction_required"}"#)));
+        assert!(!is_auth_expired(&refresh_failure(400, r#"{"error":"invalid_request"}"#)));
+        assert!(!is_auth_expired(&refresh_failure(400, "não é json")));
     }
 }

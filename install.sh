@@ -3,6 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Client OAuth padrão (opcional, fora do git): permite conectar contas sem
+# rodar `omarchy-drive setup`. Veja packaging/oauth.env.example.
+if [ -f packaging/oauth.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . packaging/oauth.env
+  set +a
+fi
+
 cargo build --release -p omarchy-drive
 install -Dm755 target/release/omarchy-drive "$HOME/.local/bin/omarchy-drive"
 install -Dm644 packaging/omarchy-drive.service "$HOME/.config/systemd/user/omarchy-drive.service"
@@ -15,8 +24,9 @@ cp shell-plugin/i18n/*.json "$plugin/i18n/"
 systemctl --user daemon-reload
 echo
 echo "Instalado. Próximos passos:"
-echo "  1. omarchy-drive setup google --client-id ... --client-secret ...   (e/ou setup microsoft)"
-echo "  2. omarchy-drive account add pessoal --provider gdrive"
-echo "  3. omarchy-drive pair add drive --account pessoal --local ~/GoogleDrive"
-echo "  4. systemctl --user enable --now omarchy-drive"
-echo "  5. Adicione o widget \"Drive Sync\" à barra: omarchy bar put omarchy-drive.status --section right"
+echo "  1. systemctl --user enable --now omarchy-drive"
+echo "  2. Adicione o widget \"Drive Sync\" à barra: omarchy bar put omarchy-drive.status --section right"
+echo "  3. No painel do widget: \"Conectar Google Drive\" (ou OneDrive) e \"Sincronizar Meu Drive\"."
+if [ -z "${OMARCHY_DRIVE_GOOGLE_CLIENT_ID:-}" ] && [ -z "${OMARCHY_DRIVE_MS_CLIENT_ID:-}" ]; then
+  echo "     Sem client padrão embutido: antes, rode \`omarchy-drive setup google|microsoft\` (veja o README)."
+fi

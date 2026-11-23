@@ -2,8 +2,10 @@
 
 // Valida e limita o status.json vindo do daemon (dado não confiável).
 var MAX_PAIRS = 16
+var MAX_ACCOUNTS = 16
 var MAX_STR = 300
-var STATES = ["idle", "syncing", "paused", "offline", "error", "needs_confirm"]
+var STATES = ["idle", "syncing", "paused", "offline", "error", "needs_confirm", "auth_expired"]
+var FLOW_STATES = ["authorizing", "done", "failed", "cancelled"]
 
 function str(v) {
   return typeof v === "string" ? v.slice(0, MAX_STR) : ""
@@ -40,7 +42,41 @@ function parse(text) {
       quotaTotal: num(p.quota_total)
     })
   }
-  return { overall: state(doc.overall), pairs: pairs }
+  // Contas: só existem a partir do status.json versão 2.
+  var accounts = []
+  if (doc.accounts && typeof doc.accounts === "object") {
+    var accNames = Object.keys(doc.accounts).slice(0, MAX_ACCOUNTS)
+    for (var j = 0; j < accNames.length; j++) {
+      var a = doc.accounts[accNames[j]] || {}
+      var accPairs = []
+      for (var k = 0; k < pairs.length; k++)
+        if (str(doc.pairs[pairs[k].name] && doc.pairs[pairs[k].name].account) === accNames[j]) accPairs.push(pairs[k].name)
+      accounts.push({
+        name: str(accNames[j]),
+        provider: str(a.provider),
+        label: str(a.label),
+        expired: a.auth === "expired",
+        pairs: accPairs
+      })
+    }
+  }
+  return { overall: state(doc.overall), pairs: pairs, accounts: accounts, accountsKnown: !!(doc.accounts && typeof doc.accounts === "object") }
+}
+
+// auth.json: progresso do fluxo de login disparado pelo painel ou pela CLI.
+function parseAuth(text) {
+  var doc
+  try { doc = JSON.parse(text) } catch (e) { return null }
+  if (!doc || typeof doc !== "object" || FLOW_STATES.indexOf(doc.state) < 0) return null
+  var started = new Date(str(doc.started_at))
+  return {
+    state: doc.state,
+    provider: str(doc.provider),
+    account: str(doc.account),
+    message: str(doc.message),
+    pid: typeof doc.pid === "number" && doc.pid > 0 ? Math.floor(doc.pid) : 0,
+    startedMs: isNaN(started.getTime()) ? 0 : started.getTime()
+  }
 }
 
 // Glifos Nerd Font (Material Design).
@@ -51,6 +87,7 @@ function glyph(overall, running) {
   case "paused": return "\u{F03E4}"         // pause
   case "offline": return "\u{F0164}"
   case "error":
+  case "auth_expired":
   case "needs_confirm": return "\u{F0028}"  // alert-circle
   default: return "\u{F0160}"               // cloud-check
   }

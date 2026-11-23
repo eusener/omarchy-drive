@@ -7,15 +7,41 @@
   "state.error": "Error",
   "state.needs_confirm": "Waiting for confirmation",
   "state.stopped": "Daemon not running",
-  "noPairs": "No folders configured. Run: omarchy-drive pair add",
+  "noPairs": "No folders are syncing yet.",
   "stoppedHint": "Start it with: systemctl --user enable --now omarchy-drive",
   "lastSync": "Last sync %1",
-  "queued": { "one": "%1 item left", "other": "%1 items left" },
-  "conflicts": { "one": "%1 conflict, both versions kept", "other": "%1 conflicts, both versions kept" },
-  "heldDeletes": { "one": "%1 deletion held. Press C to confirm", "other": "%1 deletions held. Press C to confirm" },
+  "queued": {
+    "one": "%1 item left",
+    "other": "%1 items left"
+  },
+  "conflicts": {
+    "one": "%1 conflict, both versions kept",
+    "other": "%1 conflicts, both versions kept"
+  },
+  "heldDeletes": {
+    "one": "%1 deletion held. Press C to confirm",
+    "other": "%1 deletions held. Press C to confirm"
+  },
   "storage": "%1 of %2 used",
   "syncNow": "Sync now (S)",
   "pause": "Pause (P)",
   "resume": "Resume (P)",
-  "openFolder": "Open folder (O)"
+  "openFolder": "Open folder (O)",
+  "state.auth_expired": "Login expired",
+  "accounts": "Accounts",
+  "noAccounts": "No account connected.",
+  "connectGoogle": "Connect Google Drive",
+  "connectMicrosoft": "Connect OneDrive",
+  "authWaiting": "Waiting for the browser… finish signing in there.",
+  "authCancel": "Cancel",
+  "authFailed": "Could not connect: %1",
+  "authCancelled": "Sign-in cancelled.",
+  "accountExpired": "Login expired",
+  "reauth": "Sign in again",
+  "disconnect": "Disconnect",
+  "confirmDisconnect": "Disconnect %1?",
+  "confirmDisconnectPairs": "Disconnect %1 and stop syncing: %2? Local files are kept.",
+  "confirm": "Confirm",
+  "cancel": "Cancel",
+  "defaultPair": "Sync My Drive to %1"
 }

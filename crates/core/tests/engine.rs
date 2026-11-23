@@ -12,7 +12,8 @@ use omarchy_drive_core::config::{Settings, SyncPair};
 use omarchy_drive_core::engine::PairEngine;
 use omarchy_drive_core::hash::hash_bytes;
 use omarchy_drive_core::state::State;
-use omarchy_drive_core::status::StatusHub;
+use omarchy_drive_core::oauth::{AuthError, is_auth_expired};
+use omarchy_drive_core::status::{PairState, StatusHub};
 use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem};
 
 #[derive(Default)]
@@ -27,6 +28,8 @@ struct MemProvider {
     inner: Mutex<Inner>,
     downloads: AtomicUsize,
     uploads: AtomicUsize,
+    /// Simula o provedor recusando o refresh token.
+    auth_expired: std::sync::atomic::AtomicBool,
 }
 
 impl MemProvider {
@@ -157,6 +160,10 @@ impl Provider for MemProvider {
         Ok(g.items.values().filter(|(i, _)| i.id != "root").map(|(i, _)| i.clone()).collect())
     }
     async fn changes(&self, _root: &str, cursor: &str) -> Result<ChangeBatch> {
+        if self.auth_expired.load(Ordering::SeqCst) {
+            return Err(anyhow::Error::from(AuthError::Expired("Token has been expired or revoked.".into()))
+                .context("listando mudanças"));
+        }
         let g = self.inner.lock().unwrap();
         let from: usize = cursor.parse()?;
         let mut b = ChangeBatch { cursor: g.log.len().to_string(), ..Default::default() };
@@ -252,6 +259,7 @@ struct Env {
     root: PathBuf,
     mem: Arc<MemProvider>,
     engine: PairEngine,
+    status: Arc<StatusHub>,
 }
 
 fn env(max_deletes: usize) -> Env {
@@ -270,16 +278,17 @@ fn env(max_deletes: usize) -> Env {
         paused: false,
     };
     let settings = Settings { max_deletes_without_confirm: max_deletes, ..Default::default() };
+    let status = Arc::new(StatusHub::new(None));
     let engine = PairEngine::new(
         pair,
         mem.clone(),
         State::open(&dir.path().join("state.sqlite")).unwrap(),
         settings,
-        Arc::new(StatusHub::new(None)),
+        status.clone(),
     )
     .unwrap()
     .with_trash_dir(dir.path().join("Trash"));
-    Env { _dir: dir, root, mem, engine }
+    Env { _dir: dir, root, mem, engine, status }
 }
 
 impl Env {
@@ -444,4 +453,25 @@ async fn missing_local_root_never_deletes_remote() {
     std::fs::rename(&e.root, e.root.with_file_name("Drive-desmontado")).unwrap();
     assert!(e.engine.sync_once(true).await.is_err());
     assert_eq!(e.mem.remote_read("importante.txt").unwrap(), b"!");
+}
+
+#[tokio::test]
+async fn login_expirado_deixa_o_par_em_auth_expired() {
+    let e = env(50);
+    write_local(&e.root, "a.txt", b"A");
+    e.settle().await;
+
+    e.mem.auth_expired.store(true, Ordering::SeqCst);
+    let err = e.engine.sync_once(false).await.unwrap_err();
+    assert!(is_auth_expired(&err), "{err:#}");
+    let st = e.status.snapshot().pairs["t"].clone();
+    assert_eq!(st.state, PairState::AuthExpired);
+    assert!(st.last_error.unwrap().contains("login expirado"));
+    // Nada foi apagado ou alterado por causa da falha.
+    assert_eq!(read_local(&e.root, "a.txt").unwrap(), b"A");
+
+    // Depois de reautorizar, o ciclo volta ao normal.
+    e.mem.auth_expired.store(false, Ordering::SeqCst);
+    e.sync().await;
+    assert_eq!(e.status.snapshot().pairs["t"].state, PairState::Idle);
 }

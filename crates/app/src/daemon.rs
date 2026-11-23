@@ -11,7 +11,8 @@ use notify::{RecursiveMode, Watcher};
 use omarchy_drive_core::config::{Config, Dirs, Settings};
 use omarchy_drive_core::engine::PairEngine;
 use omarchy_drive_core::state::State;
-use omarchy_drive_core::status::{PairState, StatusHub};
+use omarchy_drive_core::oauth::is_auth_expired;
+use omarchy_drive_core::status::{AuthState, PairState, StatusHub};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
@@ -49,6 +50,58 @@ pub fn notify_desktop(settings: &Settings, title: &str, body: &str) {
         .spawn();
 }
 
+/// O servidor de notificações aceita botões de ação?
+async fn notifications_support_actions() -> bool {
+    let out = tokio::process::Command::new("gdbus")
+        .args([
+            "call", "--session",
+            "--dest", "org.freedesktop.Notifications",
+            "--object-path", "/org/freedesktop/Notifications",
+            "--method", "org.freedesktop.Notifications.GetCapabilities",
+        ])
+        .output()
+        .await;
+    matches!(out, Ok(o) if o.status.success() && String::from_utf8_lossy(&o.stdout).contains("'actions'"))
+}
+
+/// Notificação única de login expirado. Com suporte a ações, o botão
+/// "Reautorizar" dispara `account reauth` (que abre o navegador); sem ele, o
+/// texto aponta para o painel.
+fn notify_auth_expired(settings: &Settings, account: String, label: String) {
+    if !settings.notifications {
+        return;
+    }
+    tokio::spawn(async move {
+        let who = if label.is_empty() { account.clone() } else { label };
+        let title = "Login do Drive expirado";
+        if !notifications_support_actions().await {
+            let body = format!("{who}: abra o painel do Drive Sync na barra para reautorizar.");
+            let _ = tokio::process::Command::new("notify-send")
+                .args(["-a", "omarchy-drive", "-i", "dialog-password", "-u", "critical", title, &body])
+                .status()
+                .await;
+            return;
+        }
+        let body = format!("{who}: a sincronização está parada até você entrar de novo.");
+        let out = tokio::process::Command::new("notify-send")
+            .args(["-a", "omarchy-drive", "-i", "dialog-password", "-u", "critical"])
+            .args(["--action=reauth=Reautorizar", title, &body])
+            .output()
+            .await;
+        if let Ok(o) = out
+            && String::from_utf8_lossy(&o.stdout).trim() == "reauth"
+            && let Ok(exe) = std::env::current_exe()
+        {
+            info!(account = %account, "reautorização pedida pela notificação");
+            let _ = tokio::process::Command::new(exe)
+                .args(["account", "reauth", &account])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        }
+    });
+}
+
 fn looks_offline(e: &anyhow::Error) -> bool {
     let s = format!("{e:#}").to_lowercase();
     ["error sending request", "dns error", "connection refused", "network is unreachable", "timed out"]
@@ -63,6 +116,9 @@ impl Supervisor {
     }
 
     fn start_all(&mut self) {
+        self.status.set_accounts(
+            self.cfg.accounts.iter().map(|a| (a.name.clone(), a.provider.to_string(), a.label.clone())),
+        );
         for pair in self.cfg.pairs.clone() {
             let account = self.cfg.account(&pair.account).cloned();
             self.status.update(&pair.name, |s| {
@@ -227,6 +283,7 @@ async fn pair_loop(
         let mut rerun = false;
         match res {
             Ok(rep) => {
+                status.set_account_auth(&engine.pair.account, AuthState::Ok);
                 backoff = Duration::ZERO;
                 was_error = false;
                 for c in &rep.conflicts {
@@ -250,6 +307,26 @@ async fn pair_loop(
                     notified_hold = false;
                 }
                 rerun = rep.rerun;
+            }
+            Err(e) if is_auth_expired(&e) => {
+                // O motor já marcou o par; aqui marca a conta e para de ciclar
+                // até um Reload (reauth/connect) ou um "sincronizar agora".
+                warn!(pair = %name, "{e:#}");
+                let account = engine.pair.account.clone();
+                // Só a primeira transição ok → expirado notifica (vários pares
+                // da mesma conta geram uma única notificação).
+                if status.set_account_auth(&account, AuthState::Expired) == Some(AuthState::Ok) {
+                    let label = status.snapshot().accounts.get(&account).map(|a| a.label.clone()).unwrap_or_default();
+                    notify_auth_expired(&settings, account, label);
+                }
+                match rx.recv().await {
+                    Some(PairCmd::SyncNow) => continue,
+                    Some(PairCmd::ConfirmDeletes) => {
+                        confirm = true;
+                        continue;
+                    }
+                    None => return,
+                }
             }
             Err(e) => {
                 let offline = looks_offline(&e);

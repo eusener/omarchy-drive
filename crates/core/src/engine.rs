@@ -205,7 +205,25 @@ impl PairEngine {
 
     /// Executa um ciclo completo. `confirm_deletes` libera exclusões em massa
     /// retidas pela proteção.
+    /// Um ciclo completo. Login recusado pelo provedor deixa o par em
+    /// `AuthExpired` (o erro continua sendo devolvido ao chamador).
     pub async fn sync_once(&self, confirm_deletes: bool) -> Result<CycleReport> {
+        let res = self.sync_inner(confirm_deletes).await;
+        if let Err(e) = &res
+            && crate::oauth::is_auth_expired(e)
+        {
+            let msg = format!("{e:#}");
+            self.set_status(|s| {
+                s.state = PairState::AuthExpired;
+                s.last_error = Some(msg);
+                s.active.clear();
+                s.queued = 0;
+            });
+        }
+        res
+    }
+
+    async fn sync_inner(&self, confirm_deletes: bool) -> Result<CycleReport> {
         let local_root = &self.pair.local;
         // Pasta local ausente (disco não montado, pasta apagada) nunca pode
         // virar "apagar tudo no remoto".
