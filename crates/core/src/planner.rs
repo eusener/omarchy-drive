@@ -79,6 +79,8 @@ pub struct Plan {
     /// estes mapas, não os da entrada.
     pub local: HashMap<RelPath, LocalEntry>,
     pub remote: HashMap<RelPath, RemoteEntry>,
+    /// Avisos para o status do par (ex.: atalho local sem documento remoto).
+    pub warnings: Vec<String>,
 }
 
 impl Plan {
@@ -317,6 +319,32 @@ pub fn plan(snap: &Snapshot) -> Plan {
         }
     }
 
+    // ---- 3b. Atalhos de documentos nativos ----
+    // O conteúdo do atalho pertence ao remoto: edição local nunca sobe e é
+    // restaurada; atalho sem documento remoto nunca vira upload.
+    let mut warnings = Vec::new();
+    per_path.retain_mut(|a| {
+        let path = a.path().to_string();
+        let native_remote = remote.get(&path).is_some_and(|r| r.item.native);
+        match a {
+            Action::Upload { .. } | Action::Conflict { .. } if native_remote => {
+                *a = Action::Download { path };
+                true
+            }
+            Action::Upload { .. } if crate::shortcut::is_shortcut_path(&path) && !remote.contains_key(&path) => {
+                if base.contains_key(&path) {
+                    // O documento foi apagado no Drive: o atalho editado vai junto.
+                    *a = Action::DeleteLocal { path };
+                    true
+                } else {
+                    warnings.push(format!("atalho sem documento no Drive, ignorado: {path}"));
+                    false
+                }
+            }
+            _ => true,
+        }
+    });
+
     // ---- 4. Consolidação de exclusões de pastas ----
     // Uma pasta apagada de um lado só é apagada do outro se nada abaixo dela
     // precisar ser mantido; senão ela é recriada. Exclusões abaixo de uma
@@ -383,7 +411,7 @@ pub fn plan(snap: &Snapshot) -> Plan {
         })
     });
     actions.extend(per_path);
-    Plan { actions, local: local.into_iter().collect(), remote: remote.into_iter().collect() }
+    Plan { actions, local: local.into_iter().collect(), remote: remote.into_iter().collect(), warnings }
 }
 
 #[cfg(test)]
@@ -466,6 +494,56 @@ mod tests {
 
     fn acts(s: Snapshot) -> Vec<Action> {
         plan(&s).actions
+    }
+
+    fn native(mut r: RemoteEntry) -> RemoteEntry {
+        r.item.native = true;
+        r
+    }
+
+    #[test]
+    fn atalho_editado_localmente_e_restaurado() {
+        let s = snap(
+            vec![base_file("R.gdoc", "D", "h", 1)],
+            vec![local_mod("R.gdoc", 1, "editado")],
+            vec![native(remote_file("R.gdoc", "D", "h"))],
+        );
+        assert_eq!(acts(s), vec![Action::Download { path: "R.gdoc".into() }]);
+    }
+
+    #[test]
+    fn atalho_com_edicao_dupla_nao_vira_conflito() {
+        let mut r = native(remote_file("R.gdoc", "D", "h"));
+        r.item.rev = "rev-novo".into();
+        r.item.hash = Some("h2".into());
+        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![local_mod("R.gdoc", 1, "editado")], vec![r]);
+        assert_eq!(acts(s), vec![Action::Download { path: "R.gdoc".into() }]);
+    }
+
+    #[test]
+    fn atalho_renomeado_localmente_renomeia_o_documento() {
+        let s = snap(
+            vec![base_file("R.gdoc", "D", "h", 7)],
+            vec![local_same("Final.gdoc", 7)],
+            vec![native(remote_file("R.gdoc", "D", "h"))],
+        );
+        assert_eq!(acts(s), vec![Action::MoveRemote { from: "R.gdoc".into(), to: "Final.gdoc".into() }]);
+    }
+
+    #[test]
+    fn atalho_apagado_localmente_vai_para_a_lixeira() {
+        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![], vec![native(remote_file("R.gdoc", "D", "h"))]);
+        assert_eq!(acts(s), vec![Action::DeleteRemote { path: "R.gdoc".into() }]);
+    }
+
+    #[test]
+    fn atalho_sem_documento_remoto_e_ignorado() {
+        let p = plan(&snap(vec![], vec![local_mod("Copiado.gdoc", 3, "x")], vec![]));
+        assert!(p.actions.is_empty());
+        assert_eq!(p.warnings.len(), 1);
+        // Documento apagado no Drive e atalho editado: o atalho vai junto.
+        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![local_mod("R.gdoc", 1, "editado")], vec![]);
+        assert_eq!(acts(s), vec![Action::DeleteLocal { path: "R.gdoc".into() }]);
     }
 
     #[test]

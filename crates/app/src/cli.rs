@@ -61,6 +61,9 @@ enum Cmd {
     },
     /// Abre a pasta local do par no gerenciador de arquivos.
     Open { pair: Option<String> },
+    /// Abre no navegador o documento de um atalho `.gdoc`/`.gsheet`/...
+    /// (usado pelo gerenciador de arquivos).
+    OpenUrl { file: PathBuf },
     /// Roda o daemon em primeiro plano (use o serviço systemd).
     Daemon,
 }
@@ -151,6 +154,9 @@ enum PairCmd {
         /// Só baixa; nunca altera o remoto.
         #[arg(long)]
         download_only: bool,
+        /// Sempre varre a pasta inteira (use em pastas de rede/montadas).
+        #[arg(long)]
+        full_scan_only: bool,
     },
     List,
     /// Remove o par (os arquivos locais e remotos são mantidos).
@@ -256,7 +262,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
         }
 
-        Cmd::Pair(PairCmd::Add { name, account, local, remote, include, ignore, download_only }) => {
+        Cmd::Pair(PairCmd::Add { name, account, local, remote, include, ignore, download_only, full_scan_only }) => {
             let (dirs, mut cfg) = load()?;
             if cfg.pair(&name).is_some() {
                 bail!("já existe um par chamado {name}");
@@ -282,6 +288,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 include,
                 ignore,
                 download_only,
+                full_scan_only,
                 paused: false,
             });
             cfg.save(&dirs.config_file())?;
@@ -297,6 +304,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 let flags = [
                     p.paused.then_some("pausado"),
                     p.download_only.then_some("só download"),
+                    p.full_scan_only.then_some("varredura completa"),
                     (!p.include.is_empty()).then_some("seletivo"),
                 ]
                 .into_iter()
@@ -416,6 +424,13 @@ pub async fn run(cli: Cli) -> Result<()> {
                 None => cfg.pairs.first().context("nenhum par configurado")?,
             };
             std::process::Command::new("xdg-open").arg(&p.local).spawn()?;
+        }
+        Cmd::OpenUrl { file } => {
+            let bytes = std::fs::read(&file).with_context(|| format!("lendo {}", file.display()))?;
+            anyhow::ensure!(bytes.len() <= 64 * 1024, "{} não é um atalho do omarchy-drive", file.display());
+            let url = omarchy_drive_core::shortcut::url_from(&bytes)
+                .with_context(|| format!("{} não é um atalho válido de documento do Google", file.display()))?;
+            std::process::Command::new("xdg-open").arg(&url).spawn().context("abrindo o navegador")?;
         }
         Cmd::Daemon => daemon::run(Dirs::get()?).await?,
     }

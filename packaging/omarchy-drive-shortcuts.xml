@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Atalhos de documentos nativos do Google criados pelo omarchy-drive. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-omarchy-drive-shortcut">
+    <comment>Google document shortcut</comment>
+    <comment xml:lang="pt_BR">Atalho de documento do Google</comment>
+    <sub-class-of type="application/json"/>
+    <generic-icon name="text-html"/>
+    <glob pattern="*.gdoc"/>
+    <glob pattern="*.gsheet"/>
+    <glob pattern="*.gslides"/>
+    <glob pattern="*.gdraw"/>
+    <glob pattern="*.gform"/>
+    <glob pattern="*.gmap"/>
+    <glob pattern="*.glink"/>
+  </mime-type>
+</mime-info>

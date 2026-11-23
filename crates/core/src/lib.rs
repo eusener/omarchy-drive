@@ -11,6 +11,7 @@ pub mod oauth;
 pub mod planner;
 pub mod provider;
 pub mod scan;
+pub mod shortcut;
 pub mod state;
 pub mod status;
 pub mod trash;

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Google Docs (omarchy-drive)
+Name[pt_BR]=Google Docs (omarchy-drive)
+Comment=Open a Google document shortcut in the browser
+Comment[pt_BR]=Abre no navegador um atalho de documento do Google
+Exec=sh -c '"$HOME/.local/bin/omarchy-drive" open-url "$1"' omarchy-drive %f
+Icon=folder-remote
+MimeType=application/x-omarchy-drive-shortcut;
+NoDisplay=true
+Terminal=false

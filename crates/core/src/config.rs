@@ -55,6 +55,10 @@ pub struct SyncPair {
     pub download_only: bool,
     #[serde(default)]
     pub paused: bool,
+    /// Sempre varre a pasta inteira (pastas de rede, onde o inotify não vê
+    /// mudanças feitas por outras máquinas).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub full_scan_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

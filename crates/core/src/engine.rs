@@ -1,7 +1,7 @@
 //! Motor de sincronização de um par: atualiza a árvore remota, varre o disco,
 //! planeja e executa as ações com verificações de segurança.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,30 @@ const KV_ROOT: &str = "root_id";
 const KV_CURSOR: &str = "cursor";
 const KV_ROOT_PATH: &str = "root_path";
 
+/// O que reler do disco num ciclo.
+#[derive(Debug, Clone)]
+pub enum ScanScope {
+    /// Pasta inteira.
+    Full,
+    /// Só estes caminhos (relativos, com subárvores), sobre o último estado
+    /// conhecido. Vazio = não lê o disco (ciclo disparado só pelo remoto).
+    Paths(HashSet<RelPath>),
+}
+
+/// Reconciliação completa periódica, mesmo sem eventos.
+pub const FULL_SCAN_EVERY: Duration = Duration::from_secs(6 * 3600);
+
+/// Último estado local conhecido, base da varredura incremental.
+#[derive(Default)]
+struct LocalCache {
+    entries: Option<HashMap<RelPath, LocalEntry>>,
+    last_full: Option<std::time::Instant>,
+    /// Caminhos que o próprio motor tocou ou não conseguiu ler: entram na
+    /// próxima varredura parcial.
+    dirty: HashSet<RelPath>,
+    force_full: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct CycleReport {
     pub executed: usize,
@@ -46,6 +70,7 @@ pub struct PairEngine {
     status: Arc<StatusHub>,
     trash_dir: Option<PathBuf>,
     last_quota: Mutex<Option<std::time::Instant>>,
+    cache: Mutex<LocalCache>,
 }
 
 /// Cota muda devagar: consulta no máximo a cada 10 minutos.
@@ -112,6 +137,7 @@ impl PairEngine {
             status,
             trash_dir,
             last_quota: Mutex::new(None),
+            cache: Mutex::new(LocalCache::default()),
         })
     }
 
@@ -131,6 +157,35 @@ impl PairEngine {
 
     fn abs(&self, rel: &str) -> PathBuf {
         if rel.is_empty() { self.pair.local.clone() } else { self.pair.local.join(rel) }
+    }
+
+    /// Caminhos que as ações vão mexer na pasta local entram na próxima
+    /// varredura parcial (o inotify também os vê, mas não dependemos só dele).
+    /// Ações só no remoto ou na base não mudam o disco. Um conflito cria uma
+    /// cópia com nome novo: a próxima varredura é completa.
+    fn mark_touched(&self, actions: &[Action]) {
+        let mut c = self.cache.lock().unwrap();
+        for a in actions {
+            match a {
+                Action::MoveLocal { from, to } => {
+                    c.dirty.insert(from.clone());
+                    c.dirty.insert(to.clone());
+                }
+                Action::Conflict { path } => {
+                    c.dirty.insert(path.clone());
+                    c.force_full = true;
+                }
+                Action::Download { path } | Action::CreateLocalDir { path } | Action::DeleteLocal { path } => {
+                    c.dirty.insert(path.clone());
+                }
+                Action::Upload { .. }
+                | Action::MoveRemote { .. }
+                | Action::CreateRemoteDir { .. }
+                | Action::DeleteRemote { .. }
+                | Action::RecordBase { .. }
+                | Action::ForgetBase { .. } => {}
+            }
+        }
     }
 
     fn set_status(&self, f: impl FnOnce(&mut crate::status::PairStatus)) {
@@ -208,6 +263,21 @@ impl PairEngine {
     /// Um ciclo completo. Login recusado pelo provedor deixa o par em
     /// `AuthExpired` (o erro continua sendo devolvido ao chamador).
     pub async fn sync_once(&self, confirm_deletes: bool) -> Result<CycleReport> {
+        self.sync_scoped(confirm_deletes, ScanScope::Full).await
+    }
+
+    /// Ciclo com varredura limitada a `scope` (o motor ainda decide fazer a
+    /// completa quando não há estado anterior ou ela está vencida).
+    pub async fn sync_scoped(&self, confirm_deletes: bool, scope: ScanScope) -> Result<CycleReport> {
+        // Registrado antes de qualquer passo que possa falhar (rede, por
+        // exemplo): um ciclo que falha não perde os caminhos pendentes.
+        {
+            let mut c = self.cache.lock().unwrap();
+            match scope {
+                ScanScope::Full => c.force_full = true,
+                ScanScope::Paths(p) => c.dirty.extend(p),
+            }
+        }
         let res = self.sync_inner(confirm_deletes).await;
         if let Err(e) = &res
             && crate::oauth::is_auth_expired(e)
@@ -239,19 +309,48 @@ impl PairEngine {
         let root_id = self.root_id().await?;
         let tree = self.refresh_remote(&root_id).await?;
         let (mut remote, dups) = tree.entries(&self.ignore);
-        remote.retain(|_, r| !r.item.native);
 
         let mut base = self.st(|s| s.load_base())?;
         let ignore = self.ignore.clone();
         let base_for_scan = base.clone();
         let kind = self.provider.hash_kind();
         let root = local_root.clone();
-        let scanned = tokio::task::spawn_blocking(move || {
-            scan::scan(&root, &ignore, &base_for_scan, kind)
+        let (prev, dirty) = {
+            let mut c = self.cache.lock().unwrap();
+            let due = c.last_full.is_none_or(|t| t.elapsed() >= FULL_SCAN_EVERY);
+            let full = self.pair.full_scan_only || c.force_full || due;
+            c.force_full = false;
+            let dirty = std::mem::take(&mut c.dirty);
+            (if full { None } else { c.entries.clone() }, dirty)
+        };
+        let full = prev.is_none();
+        if full {
+            info!(pair = %self.pair.name, scope = "full", "varredura local");
+        } else if !dirty.is_empty() {
+            info!(pair = %self.pair.name, scope = "paths", n = dirty.len(), "varredura local");
+        }
+        let dirty_for_scan = dirty.clone();
+        let scanned = tokio::task::spawn_blocking(move || match prev {
+            None => scan::scan(&root, &ignore, &base_for_scan, kind),
+            Some(prev) if dirty_for_scan.is_empty() => scan::ScanResult { entries: prev, ..Default::default() },
+            Some(prev) => scan::scan_paths(&root, &ignore, &base_for_scan, kind, &prev, &dirty_for_scan),
         })
         .await?;
         if scanned.skipped.iter().any(|p| p.is_empty()) {
+            // Mantém os caminhos pendentes para a próxima tentativa.
+            let mut c = self.cache.lock().unwrap();
+            c.dirty.extend(dirty);
+            c.force_full |= full;
+            drop(c);
             bail!("não foi possível ler a pasta local {}", local_root.display());
+        }
+        {
+            let mut c = self.cache.lock().unwrap();
+            c.entries = Some(scanned.entries.clone());
+            if full {
+                c.last_full = Some(std::time::Instant::now());
+            }
+            c.dirty.extend(scanned.skipped.iter().cloned());
         }
         for e in &scanned.errors {
             warn!(pair = %self.pair.name, "{e}");
@@ -270,6 +369,8 @@ impl PairEngine {
 
         let snap = Snapshot { base: base.clone(), local, remote };
         let mut plan = planner::plan(&snap);
+        let plan_warnings = std::mem::take(&mut plan.warnings);
+        self.mark_touched(&plan.actions);
         if self.pair.download_only {
             restrict_download_only(&mut plan);
         }
@@ -344,6 +445,7 @@ impl PairEngine {
             s.active.clear();
             s.last_sync = Some(chrono::Utc::now());
             s.warnings = dups.iter().map(|d| format!("nomes duplicados no remoto: {d}")).collect();
+            s.warnings.extend(plan_warnings.iter().cloned());
             for c in conflicts {
                 if !s.conflicts.contains(&c) {
                     s.conflicts.push(c);
@@ -546,7 +648,10 @@ impl PairEngine {
     async fn move_remote(&self, c: &Cycle, from: &str, to: &str) -> Result<()> {
         let b = self.base_get(c, from).context("base ausente para mover")?;
         let parent_id = self.ensure_remote_dir(c, parent_of(to).unwrap_or("")).await?;
-        let item = self.provider.move_item(&b.remote_id, &parent_id, name_of(to)).await?;
+        // Atalho de documento nativo: no Drive o nome não tem a extensão.
+        let native = c.remote.get(to).is_some_and(|r| r.item.native);
+        let name = if native { crate::shortcut::strip_ext(name_of(to)) } else { name_of(to) };
+        let item = self.provider.move_item(&b.remote_id, &parent_id, name).await?;
         self.st(|s| s.upsert_remote(std::slice::from_ref(&item)))?;
         self.relocate(c, from, to)?;
         if let Some(mut nb) = self.base_get(c, to) {
@@ -561,9 +666,6 @@ impl PairEngine {
 
     async fn download(&self, c: &Cycle, path: &str) -> Result<()> {
         let r = c.remote.get(path).context("item remoto sumiu")?;
-        if r.item.native {
-            return Ok(());
-        }
         let dst = self.abs(path);
         let dir = dst.parent().context("sem pasta pai")?.to_path_buf();
         std::fs::create_dir_all(&dir)?;

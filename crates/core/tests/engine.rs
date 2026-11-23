@@ -14,7 +14,7 @@ use omarchy_drive_core::hash::hash_bytes;
 use omarchy_drive_core::state::State;
 use omarchy_drive_core::oauth::{AuthError, is_auth_expired};
 use omarchy_drive_core::status::{PairState, StatusHub};
-use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem};
+use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem, shortcut};
 
 #[derive(Default)]
 struct Inner {
@@ -116,6 +116,19 @@ impl MemProvider {
         }
     }
 
+    /// Cria um Google Doc nativo (já mapeado: nome com `.gdoc`, hash do atalho).
+    fn remote_native_doc(&self, name: &str) {
+        let mut g = self.inner.lock().unwrap();
+        let file = format!("{name}.gdoc");
+        let mut it = Self::new_item(&mut g, "root", &file, false, b"");
+        let bytes = shortcut::content(&it.id, &file);
+        it.native = true;
+        it.size = bytes.len() as u64;
+        it.hash = Some(hash_bytes(HashKind::Md5, &bytes));
+        g.items.insert(it.id.clone(), (it.clone(), Vec::new()));
+        Self::touch(&mut g, &it.id);
+    }
+
     fn remote_rename(&self, path: &str, new_name: &str) {
         let mut g = self.inner.lock().unwrap();
         let id = Self::find(&g, path).unwrap();
@@ -155,9 +168,17 @@ impl Provider for MemProvider {
         Ok(self.inner.lock().unwrap().log.len().to_string())
     }
     async fn list_tree(&self, root: &str) -> Result<Vec<RemoteItem>> {
-        assert_eq!(root, "root");
+        // Descendentes de `root` (a raiz do par ou uma subpasta).
         let g = self.inner.lock().unwrap();
-        Ok(g.items.values().filter(|(i, _)| i.id != "root").map(|(i, _)| i.clone()).collect())
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_string()];
+        while let Some(cur) = stack.pop() {
+            for (i, _) in g.items.values().filter(|(i, _)| i.parent_id.as_deref() == Some(&cur)) {
+                stack.push(i.id.clone());
+                out.push(i.clone());
+            }
+        }
+        Ok(out)
     }
     async fn changes(&self, _root: &str, cursor: &str) -> Result<ChangeBatch> {
         if self.auth_expired.load(Ordering::SeqCst) {
@@ -176,6 +197,11 @@ impl Provider for MemProvider {
         Ok(b)
     }
     async fn download(&self, item: &RemoteItem, dest: &Path) -> Result<()> {
+        if item.native {
+            // Como o provedor do Google: atalho gerado localmente, sem rede.
+            std::fs::write(dest, shortcut::content(&item.id, &item.name))?;
+            return Ok(());
+        }
         self.downloads.fetch_add(1, Ordering::SeqCst);
         let data = self.inner.lock().unwrap().items[&item.id].1.clone();
         std::fs::write(dest, data)?;
@@ -214,7 +240,13 @@ impl Provider for MemProvider {
         let mut g = self.inner.lock().unwrap();
         let Some((it, _)) = g.items.get_mut(id) else { bail!("404") };
         it.parent_id = Some(parent.into());
-        it.name = name.into();
+        if it.native {
+            // O Drive guarda o nome sem extensão; o mapeamento devolve com ".gdoc".
+            assert!(!shortcut::is_shortcut_path(name), "nome com extensão enviado ao Drive: {name}");
+            it.name = format!("{name}.gdoc");
+        } else {
+            it.name = name.into();
+        }
         let it = it.clone();
         Self::touch(&mut g, id);
         Ok(it)
@@ -275,6 +307,7 @@ fn env(max_deletes: usize) -> Env {
         include: vec![],
         ignore: vec![],
         download_only: false,
+        full_scan_only: false,
         paused: false,
     };
     let settings = Settings { max_deletes_without_confirm: max_deletes, ..Default::default() };
@@ -474,4 +507,77 @@ async fn login_expirado_deixa_o_par_em_auth_expired() {
     e.mem.auth_expired.store(false, Ordering::SeqCst);
     e.sync().await;
     assert_eq!(e.status.snapshot().pairs["t"].state, PairState::Idle);
+}
+
+#[tokio::test]
+async fn documento_nativo_vira_atalho_sem_download() {
+    let e = env(50);
+    e.mem.remote_native_doc("Relatório");
+    e.settle().await;
+    let local = read_local(&e.root, "Relatório.gdoc").expect("atalho criado");
+    assert!(shortcut::url_from(&local).unwrap().starts_with("https://docs.google.com/document/d/"));
+    assert_eq!(e.mem.downloads.load(Ordering::SeqCst), 0, "documento nativo não pode ser baixado");
+
+    // Edição local do atalho: nada sobe, o conteúdo é restaurado.
+    write_local(&e.root, "Relatório.gdoc", b"editado");
+    e.settle().await;
+    assert_eq!(read_local(&e.root, "Relatório.gdoc").unwrap(), local);
+    assert_eq!(e.mem.uploads.load(Ordering::SeqCst), 0);
+
+    // Rename local renomeia o documento (sem a extensão no Drive).
+    std::fs::rename(e.root.join("Relatório.gdoc"), e.root.join("Final.gdoc")).unwrap();
+    e.settle().await;
+    assert_eq!(e.mem.remote_names(), vec!["Final.gdoc".to_string()]);
+
+    // Exclusão local manda o documento para a lixeira.
+    std::fs::remove_file(e.root.join("Final.gdoc")).unwrap();
+    e.settle().await;
+    assert!(e.mem.remote_names().is_empty());
+    assert_eq!(e.mem.uploads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn atalho_copiado_de_fora_nao_sobe() {
+    let e = env(50);
+    write_local(&e.root, "Alheio.gdoc", &shortcut::content("ID-DE-OUTRA-CONTA", "Alheio.gdoc"));
+    e.settle().await;
+    assert_eq!(e.mem.uploads.load(Ordering::SeqCst), 0);
+    assert!(e.status.snapshot().pairs["t"].warnings.iter().any(|w| w.contains("Alheio.gdoc")));
+}
+
+#[tokio::test]
+async fn varredura_incremental_usa_so_os_caminhos_sujos() {
+    use omarchy_drive_core::engine::ScanScope;
+    use std::collections::HashSet;
+    let paths = |v: &[&str]| ScanScope::Paths(v.iter().map(|s| s.to_string()).collect::<HashSet<_>>());
+    let e = env(50);
+    write_local(&e.root, "a.txt", b"A");
+    e.settle().await; // primeira varredura: completa
+
+    // Ciclo só do remoto não lê o disco: arquivo novo sem evento fica para depois.
+    write_local(&e.root, "sem-evento.txt", b"S");
+    let r = e.engine.sync_scoped(false, paths(&[])).await.unwrap();
+    assert_eq!(r.executed, 0);
+    assert!(e.mem.remote_read("sem-evento.txt").is_none());
+
+    // Com o evento, sobe.
+    let r = e.engine.sync_scoped(false, paths(&["sem-evento.txt"])).await.unwrap();
+    assert_eq!(r.executed, 1);
+    assert_eq!(e.mem.remote_read("sem-evento.txt").unwrap(), b"S");
+
+    // Mudança remota baixada; o motor marca o caminho e o ciclo seguinte fica ocioso.
+    e.mem.remote_write("Docs/r.md", b"R");
+    let r = e.engine.sync_scoped(false, paths(&[])).await.unwrap();
+    assert!(r.executed >= 1);
+    assert_eq!(read_local(&e.root, "Docs/r.md").unwrap(), b"R");
+    let r = e.engine.sync_scoped(false, paths(&[])).await.unwrap();
+    assert_eq!(r.executed, 0, "{r:?}");
+
+    // Exclusão local com evento propaga; sem confirmação no disco não propagaria.
+    std::fs::remove_file(e.root.join("a.txt")).unwrap();
+    e.engine.sync_scoped(false, paths(&["a.txt"])).await.unwrap();
+    assert!(e.mem.remote_read("a.txt").is_none());
+
+    // Uma completa depois de tudo não encontra diferença.
+    assert_eq!(e.engine.sync_once(false).await.unwrap().executed, 0);
 }

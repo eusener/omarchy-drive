@@ -21,6 +21,14 @@ mkdir -p "$plugin/i18n"
 cp shell-plugin/manifest.json shell-plugin/Panel.qml shell-plugin/Model.js "$plugin/"
 cp shell-plugin/i18n/*.json "$plugin/i18n/"
 
+# Atalhos .gdoc/.gsheet/...: tipo MIME próprio e abertura no navegador.
+data="${XDG_DATA_HOME:-$HOME/.local/share}"
+install -Dm644 packaging/omarchy-drive-shortcuts.xml "$data/mime/packages/omarchy-drive-shortcuts.xml"
+install -Dm644 packaging/omarchy-drive-open.desktop "$data/applications/omarchy-drive-open.desktop"
+update-mime-database "$data/mime" >/dev/null 2>&1 || true
+update-desktop-database "$data/applications" >/dev/null 2>&1 || true
+xdg-mime default omarchy-drive-open.desktop application/x-omarchy-drive-shortcut
+
 systemctl --user daemon-reload
 echo
 echo "Instalado. Próximos passos:"

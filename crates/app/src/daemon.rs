@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher};
 use omarchy_drive_core::config::{Config, Dirs, Settings};
-use omarchy_drive_core::engine::PairEngine;
+use omarchy_drive_core::engine::{PairEngine, ScanScope};
 use omarchy_drive_core::state::State;
 use omarchy_drive_core::oauth::is_auth_expired;
 use omarchy_drive_core::status::{AuthState, PairState, StatusHub};
@@ -231,6 +231,13 @@ impl Supervisor {
 /// Só mudanças de conteúdo/estrutura disparam um ciclo. Eventos de acesso
 /// (a própria varredura abre pastas e arquivos) e de metadados criariam um
 /// laço de ciclos vazios.
+/// Caminhos mudados desde o último ciclo (relativos à pasta do par).
+#[derive(Default)]
+struct Pending {
+    paths: std::collections::HashSet<String>,
+    rescan: bool,
+}
+
 fn is_relevant(ev: &notify::Event) -> bool {
     use notify::EventKind;
     use notify::event::ModifyKind;
@@ -250,12 +257,40 @@ async fn pair_loop(
     status: Arc<StatusHub>,
 ) {
     let name = engine.pair.name.clone();
-    // Observador do sistema de arquivos (inotify).
+    // Observador do sistema de arquivos (inotify). Os caminhos mudados vão
+    // para `pending`; o canal só acorda o laço.
+    let pending = Arc::new(std::sync::Mutex::new(Pending::default()));
     let (ev_tx, mut ev_rx) = mpsc::channel::<()>(1);
+    let root = engine.pair.local.clone();
+    let pend = pending.clone();
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(ev) = res
-            && is_relevant(&ev)
-        {
+        let wake = {
+            let mut p = pend.lock().unwrap();
+            match res {
+                // Erro do observador (ex.: fila do kernel estourou): estado incerto.
+                Err(_) => {
+                    p.rescan = true;
+                    true
+                }
+                Ok(ev) if ev.need_rescan() => {
+                    p.rescan = true;
+                    true
+                }
+                Ok(ev) if is_relevant(&ev) => {
+                    for path in &ev.paths {
+                        if let Ok(rel) = path.strip_prefix(&root)
+                            && let Some(rel) = rel.to_str()
+                            && !rel.contains(".omarchy-drive")
+                        {
+                            p.paths.insert(rel.to_string());
+                        }
+                    }
+                    true
+                }
+                Ok(_) => false,
+            }
+        };
+        if wake {
             let _ = ev_tx.try_send(());
         }
     });
@@ -272,13 +307,33 @@ async fn pair_loop(
             None
         }
     };
+    // Sem inotify, só a varredura completa enxerga mudanças locais.
+    let inotify_ok = _watcher.is_some();
 
     let mut confirm = false;
+    // Primeira varredura (partida) e "sincronizar agora" são completas.
+    let mut force_full = true;
+    let mut last_mono = std::time::Instant::now();
+    let mut last_wall = std::time::SystemTime::now();
     let mut backoff = Duration::ZERO;
     let mut was_error = false;
     let mut notified_hold = false;
     loop {
-        let res = engine.sync_once(confirm).await;
+        // Volta da suspensão: o relógio de parede andou e o monotônico não.
+        let wall = last_wall.elapsed().unwrap_or_default();
+        if wall > last_mono.elapsed() + Duration::from_secs(60) {
+            info!(pair = %name, "salto de relógio (suspensão?); varredura completa");
+            force_full = true;
+        }
+        let scope = {
+            let mut p = pending.lock().unwrap();
+            let full = std::mem::take(&mut force_full) || std::mem::take(&mut p.rescan) || !inotify_ok;
+            let paths = std::mem::take(&mut p.paths);
+            if full { ScanScope::Full } else { ScanScope::Paths(paths) }
+        };
+        let res = engine.sync_scoped(confirm, scope).await;
+        last_mono = std::time::Instant::now();
+        last_wall = std::time::SystemTime::now();
         confirm = false;
         let mut rerun = false;
         match res {
@@ -320,7 +375,10 @@ async fn pair_loop(
                     notify_auth_expired(&settings, account, label);
                 }
                 match rx.recv().await {
-                    Some(PairCmd::SyncNow) => continue,
+                    Some(PairCmd::SyncNow) => {
+                        force_full = true;
+                        continue;
+                    }
                     Some(PairCmd::ConfirmDeletes) => {
                         confirm = true;
                         continue;
@@ -363,7 +421,7 @@ async fn pair_loop(
                 }
             }
             cmd = rx.recv() => match cmd {
-                Some(PairCmd::SyncNow) => {}
+                Some(PairCmd::SyncNow) => force_full = true,
                 Some(PairCmd::ConfirmDeletes) => confirm = true,
                 None => return,
             },

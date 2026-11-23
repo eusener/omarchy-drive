@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
 use omarchy_drive_core::http::{self, HttpError};
 use omarchy_drive_core::oauth::{OAuthEndpoints, TokenManager};
-use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem};
+use omarchy_drive_core::hash::hash_bytes;
+use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem, shortcut};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -121,15 +122,28 @@ struct StorageQuota {
     usage: Option<String>,
 }
 
+/// Documentos nativos viram atalhos: nome com extensão (`.gdoc`...), e
+/// tamanho e md5 do JSON do atalho, que a varredura local calcula igual.
 fn map_file(f: DriveFile) -> RemoteItem {
     let is_dir = f.mime_type == FOLDER_MIME;
     let native = !is_dir && f.mime_type.starts_with(NATIVE_PREFIX);
-    let mtime_ms = f
-        .modified_time
-        .as_deref()
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        .map(|t| t.timestamp_millis())
-        .unwrap_or(0);
+    if native {
+        let name = format!("{}.{}", f.name, shortcut::ext_for_mime(&f.mime_type));
+        let bytes = shortcut::content(&f.id, &name);
+        let mtime_ms = parse_mtime(f.modified_time.as_deref());
+        return RemoteItem {
+            parent_id: f.parents.into_iter().next(),
+            size: bytes.len() as u64,
+            hash: Some(hash_bytes(HashKind::Md5, &bytes)),
+            id: f.id,
+            name,
+            is_dir: false,
+            mtime_ms,
+            rev: f.version.unwrap_or_default(),
+            native: true,
+        };
+    }
+    let mtime_ms = parse_mtime(f.modified_time.as_deref());
     RemoteItem {
         id: f.id,
         parent_id: f.parents.into_iter().next(),
@@ -141,6 +155,10 @@ fn map_file(f: DriveFile) -> RemoteItem {
         hash: f.md5_checksum,
         native,
     }
+}
+
+fn parse_mtime(t: Option<&str>) -> i64 {
+    t.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| t.timestamp_millis()).unwrap_or(0)
 }
 
 /// Escapa um literal para uso entre aspas simples na linguagem de busca `q`.
@@ -469,7 +487,9 @@ impl Provider for GDrive {
 
     async fn download(&self, item: &RemoteItem, dest: &Path) -> Result<()> {
         if item.native {
-            bail!("{:?} é um documento nativo do Google e não tem conteúdo para baixar", item.name);
+            // Atalho: gerado localmente, sem tocar a rede.
+            tokio::fs::write(dest, shortcut::content(&item.id, &item.name)).await?;
+            return Ok(());
         }
         let url = format!("{API}/files/{}", item.id);
         let resp = http::send(&self.tokens, || {
@@ -646,8 +666,24 @@ mod tests {
         }));
         assert!(it.native);
         assert!(!it.is_dir);
-        assert_eq!(it.size, 0);
-        assert_eq!(it.hash, None);
+        assert_eq!(it.name, "Planilha.gsheet");
+        let bytes = shortcut::content("G1", "Planilha.gsheet");
+        assert_eq!(it.size, bytes.len() as u64);
+        assert_eq!(it.hash, Some(hash_bytes(HashKind::Md5, &bytes)));
+        assert!(it.size < 1024);
+    }
+
+    #[test]
+    fn atalhos_por_tipo() {
+        for (mime, name) in [
+            ("application/vnd.google-apps.document", "Relatório.gdoc"),
+            ("application/vnd.google-apps.presentation", "Relatório.gslides"),
+            ("application/vnd.google-apps.jam", "Relatório.glink"),
+        ] {
+            let it = parse(json!({ "id": "D", "name": "Relatório", "mimeType": mime }));
+            assert_eq!(it.name, name);
+            assert!(shortcut::url_from(&shortcut::content(&it.id, &it.name)).is_some());
+        }
     }
 
     #[test]
