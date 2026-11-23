@@ -30,25 +30,25 @@
 - [x] 4.1 Ler `OMARCHY_DRIVE_GOOGLE_CLIENT_ID`, `..._GOOGLE_CLIENT_SECRET` e `..._MS_CLIENT_ID` com `option_env!`; o `install.sh` carrega `packaging/oauth.env` (adicionado ao `.gitignore`); verificar que `git status` não mostra o arquivo e que `strings` encontra o id no binário instalado
 - [x] 4.2 Adicionar `Account.client_id` e a resolução por conta em `providers::endpoints` (`[oauth]`, depois o padrão, depois conta antiga, depois erro), gravando o client usado no connect; verificar com testes unitários dos quatro casos e com a conta `pessoal` (sem `client_id`) continuando a sincronizar
 - [x] 4.3 Sem client padrão nem configurado, `connect` deve falhar com mensagem apontando o README, sem abrir o navegador; verificar compilando sem `oauth.env`
-- [ ] 4.4 Criar `site/index.html` e `site/privacy.html` (estáticas, sem scripts de terceiros) e publicá-las no host escolhido; verificar com `curl -I` nas duas URLs públicas
-- [ ] 4.5 Guiar o usuário na tela de branding (página inicial, política, domínio autorizado) e na publicação "Em produção"; verificar o status "Em produção" no console e atualizar o README (seção Credenciais) dizendo que o vencimento de 7 dias não se aplica mais
+- [x] 4.4 Criar `docs/index.html` e `docs/privacy.html` (o GitHub Pages só serve a raiz ou `/docs`) (estáticas, sem scripts de terceiros) e publicá-las no host escolhido; verificar com `curl -I` nas duas URLs públicas
+- [x] 4.5 Guiar o usuário na tela de branding (página inicial, política, domínio autorizado) e na publicação "Em produção"; verificar o status "Em produção" no console e atualizar o README (seção Credenciais) dizendo que o vencimento de 7 dias não se aplica mais
 
 ## 5. Atalhos de Google Docs
 
-- [ ] 5.1 No provedor gdrive, pedir `webViewLink`, criar a tabela de MIME para extensão e preencher nome com extensão, tamanho e md5 do JSON determinístico; verificar com testes de `map_file` para Doc, Planilha, Apresentação e tipo desconhecido (`.glink`)
-- [ ] 5.2 No planejador, fazer o remoto sempre vencer para itens nativos (divergência local vira `Download`, nunca `Upload`/`Conflict`); verificar com testes do planejador para edição local, edição dupla, rename local e exclusão local de atalho
-- [ ] 5.3 No motor, gravar o JSON localmente (temporário e rename) para `Download` nativo e remover o `retain(!native)`; verificar com teste ponta a ponta no MemProvider que nenhum `download()` do provedor é chamado
-- [ ] 5.4 Na varredura, ignorar com aviso arquivos de atalho sem item remoto nem base; verificar com teste de `.gdoc` copiado de fora
-- [ ] 5.5 Implementar `omarchy-drive open-url <arquivo>` (só `https://docs.google.com/` e `https://drive.google.com/`); o `install.sh` instala o MIME XML e o `.desktop` e roda `update-mime-database` e `xdg-mime default`; verificar `xdg-mime query filetype` num `.gdoc` e a abertura pelo Nautilus
-- [ ] 5.6 Validar contra o Drive real: criar um Doc na pasta de teste, conferir o atalho local, renomear e apagar localmente, e conferir no Drive (rename e lixeira); documentar no README e mudar a linha do roadmap para ✅
+- [x] 5.1 No provedor gdrive (URL de edição derivada do id, sem `webViewLink`, para o atalho ser determinístico), criar a tabela de MIME para extensão e preencher nome com extensão, tamanho e md5 do JSON determinístico; verificar com testes de `map_file` para Doc, Planilha, Apresentação e tipo desconhecido (`.glink`)
+- [x] 5.2 No planejador, fazer o remoto sempre vencer para itens nativos (divergência local vira `Download`, nunca `Upload`/`Conflict`); verificar com testes do planejador para edição local, edição dupla, rename local e exclusão local de atalho
+- [x] 5.3 No motor, baixar nativos pelo caminho normal (temporário, hash e rename), com o provedor gerando o JSON localmente sem rede, e remover o `retain(!native)`; verificar com teste ponta a ponta no MemProvider que nenhum `download()` do provedor é chamado
+- [x] 5.4 No planejador, ignorar com aviso arquivos de atalho sem item remoto nem base; verificar com teste de `.gdoc` copiado de fora
+- [x] 5.5 Implementar `omarchy-drive open-url <arquivo>` (só `https://docs.google.com/` e `https://drive.google.com/`); o `install.sh` instala o MIME XML e o `.desktop` e roda `update-mime-database` e `xdg-mime default`; verificar `xdg-mime query filetype` num `.gdoc` e a abertura pelo Nautilus
+- [x] 5.6 Validar contra o Drive real: criar um Doc na pasta de teste, conferir o atalho local, renomear e apagar localmente, e conferir no Drive (rename e lixeira); documentar no README e mudar a linha do roadmap para ✅
 
 ## 6. Varredura local incremental
 
-- [ ] 6.1 Criar `ScanScope::{Full, Paths}` e a varredura parcial em `scan.rs` (stat e hash do arquivo, subárvore de pasta, `ENOENT` confirmado pelo pai), com snapshot `last_local` no `PairEngine`; verificar com testes unitários de criação, edição, rename por editor (remove e recria), pasta movida para dentro e pai apagado
-- [ ] 6.2 Implementar o teste de equivalência: sequências de operações num diretório temporário comparando `plan(full)` com `plan(parcial)`; verificar `cargo test` passando com pelo menos 20 sequências
-- [ ] 6.3 No daemon, acumular os caminhos sujos por par e forçar varredura completa na partida, em `need_rescan()`, em salto de relógio acima de 60 s e a cada 6 h; ciclo de polling sem eventos não lê o disco; verificar no log (`scope=paths n=1` numa edição, `scope=full` na partida)
-- [ ] 6.4 Adicionar a opção `full_scan_only` por par (pastas de rede) e documentar no README; verificar que um par com a opção sempre registra `scope=full`
-- [ ] 6.5 Medir antes e depois numa pasta com cerca de 50 mil arquivos (tempo do ciclo e CPU com `systemd-cgtop`/`journalctl`) e registrar no README; atualizar a linha do roadmap
+- [x] 6.1 Criar `ScanScope::{Full, Paths}` e a varredura parcial em `scan.rs` (stat e hash do arquivo, subárvore de pasta, `ENOENT` confirmado pelo pai), com snapshot `last_local` no `PairEngine`; verificar com testes unitários de criação, edição, rename por editor (remove e recria), pasta movida para dentro e pai apagado
+- [x] 6.2 Implementar o teste de equivalência: sequências de operações num diretório temporário comparando `plan(full)` com `plan(parcial)`; verificar `cargo test` passando com pelo menos 20 sequências
+- [x] 6.3 No daemon, acumular os caminhos sujos por par e forçar varredura completa na partida, em `need_rescan()`, em salto de relógio acima de 60 s e a cada 6 h; ciclo de polling sem eventos não lê o disco; verificar no log (`scope=paths n=1` numa edição, `scope=full` na partida)
+- [x] 6.4 Adicionar a opção `full_scan_only` por par (pastas de rede) e documentar no README; verificar que um par com a opção sempre registra `scope=full`
+- [x] 6.5 Medir antes e depois numa árvore de cerca de 50 mil arquivos (benchmark da varredura completa contra a parcial; um par real com 50 mil arquivos exigiria 50 mil uploads ao Drive) e registrar no README; atualizar a linha do roadmap
 
 ## 7. Tokens no keyring
 

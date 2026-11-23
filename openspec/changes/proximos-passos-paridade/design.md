@@ -120,7 +120,7 @@ Para abrir os atalhos, o `install.sh` instala:
 
 ### 9. Páginas públicas para a publicação
 
-Duas páginas estáticas, `site/index.html` e `site/privacy.html`, sem rastreamento e sem scripts de terceiros. A publicação exige um host público. Como o repositório é privado, o GitHub Pages dele depende de plano pago (ver Open Questions). As páginas são cadastradas na tela de branding do Google Auth Platform. O domínio autorizado é o do host escolhido.
+Duas páginas estáticas, `docs/index.html` e `docs/privacy.html` (o GitHub Pages só serve a raiz ou `/docs`), sem rastreamento e sem scripts de terceiros. A publicação exige um host público. Como o repositório é privado, o GitHub Pages dele depende de plano pago (ver Open Questions). As páginas são cadastradas na tela de branding do Google Auth Platform. O domínio autorizado é o do host escolhido.
 
 ### 10. Armazenamento de tokens atrás de uma trait
 
