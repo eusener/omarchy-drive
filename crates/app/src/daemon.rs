@@ -172,6 +172,21 @@ impl Supervisor {
     }
 }
 
+/// Só mudanças de conteúdo/estrutura disparam um ciclo. Eventos de acesso
+/// (a própria varredura abre pastas e arquivos) e de metadados criariam um
+/// laço de ciclos vazios.
+fn is_relevant(ev: &notify::Event) -> bool {
+    use notify::EventKind;
+    use notify::event::ModifyKind;
+    let kind_ok = match ev.kind {
+        EventKind::Create(_) | EventKind::Remove(_) => true,
+        EventKind::Modify(ModifyKind::Metadata(_)) => false,
+        EventKind::Modify(_) => true,
+        EventKind::Access(_) | EventKind::Any | EventKind::Other => false,
+    };
+    kind_ok && !ev.paths.iter().all(|p| p.to_string_lossy().contains(".omarchy-drive"))
+}
+
 async fn pair_loop(
     engine: PairEngine,
     mut rx: mpsc::Receiver<PairCmd>,
@@ -182,11 +197,10 @@ async fn pair_loop(
     // Observador do sistema de arquivos (inotify).
     let (ev_tx, mut ev_rx) = mpsc::channel::<()>(1);
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(ev) = res {
-            let ours = ev.paths.iter().all(|p| p.to_string_lossy().contains(".omarchy-drive"));
-            if !ours {
-                let _ = ev_tx.try_send(());
-            }
+        if let Ok(ev) = res
+            && is_relevant(&ev)
+        {
+            let _ = ev_tx.try_send(());
         }
     });
     let _watcher = match watcher {

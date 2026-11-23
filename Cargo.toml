@@ -30,3 +30,4 @@ clap = { version = "4", features = ["derive"] }
 directories = "6"
 globset = "0.4"
 tempfile = "3"
+libc = "0.2"

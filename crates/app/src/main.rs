@@ -16,5 +16,15 @@ async fn main() -> Result<()> {
         .with_target(false)
         .with_writer(std::io::stderr)
         .init();
-    cli::run(cli::Cli::parse()).await
+    let cli = cli::Cli::parse();
+    if !cli.is_daemon() {
+        // Comandos de terminal: comportamento Unix padrão (`status | head`
+        // encerra em silêncio). O daemon mantém SIGPIPE ignorado para que um
+        // cliente que feche o socket não o derrube.
+        // SAFETY: chamado no início do processo, antes de qualquer escrita.
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+    cli::run(cli).await
 }

@@ -19,6 +19,12 @@ pub struct Cli {
     cmd: Cmd,
 }
 
+impl Cli {
+    pub fn is_daemon(&self) -> bool {
+        matches!(self.cmd, Cmd::Daemon)
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Configura as credenciais OAuth do app (uma vez por provedor).

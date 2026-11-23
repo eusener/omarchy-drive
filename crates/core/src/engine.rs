@@ -45,7 +45,11 @@ pub struct PairEngine {
     settings: Settings,
     status: Arc<StatusHub>,
     trash_dir: Option<PathBuf>,
+    last_quota: Mutex<Option<std::time::Instant>>,
 }
+
+/// Cota muda devagar: consulta no máximo a cada 10 minutos.
+const QUOTA_EVERY: Duration = Duration::from_secs(600);
 
 /// Contexto mutável de um ciclo, compartilhado entre transferências paralelas.
 struct Cycle {
@@ -99,7 +103,16 @@ impl PairEngine {
     ) -> Result<Self> {
         let ignore = Ignore::new(&pair.ignore, &pair.include)?;
         let trash_dir = crate::trash::default_trash_dir().ok();
-        Ok(Self { pair, provider, state: Mutex::new(state), ignore, settings, status, trash_dir })
+        Ok(Self {
+            pair,
+            provider,
+            state: Mutex::new(state),
+            ignore,
+            settings,
+            status,
+            trash_dir,
+            last_quota: Mutex::new(None),
+        })
     }
 
     /// Troca a lixeira local (usado nos testes).
@@ -299,7 +312,11 @@ impl PairEngine {
             self.run(&cycle, a, &mut report).await;
         }
 
-        let quota = self.provider.quota().await.ok();
+        let due = self.last_quota.lock().unwrap().is_none_or(|t| t.elapsed() >= QUOTA_EVERY);
+        let quota = if due { self.provider.quota().await.ok() } else { None };
+        if quota.is_some() {
+            *self.last_quota.lock().unwrap() = Some(std::time::Instant::now());
+        }
         let held = report.held_deletes;
         let conflicts = report.conflicts.clone();
         self.set_status(|s| {
