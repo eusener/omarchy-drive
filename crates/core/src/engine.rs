@@ -55,6 +55,14 @@ struct Cycle {
     remote: HashMap<RelPath, RemoteEntry>,
 }
 
+/// Sufixo único para arquivos temporários: downloads paralelos na mesma pasta
+/// não podem compartilhar o mesmo temporário.
+fn tmp_suffix() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    format!("{}-{}-{}", now_ms(), std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
@@ -244,7 +252,8 @@ impl PairEngine {
             report.held_deletes = deletes;
         }
 
-        let Snapshot { local, remote, .. } = snap;
+        let local = std::mem::take(&mut plan.local);
+        let remote = std::mem::take(&mut plan.remote);
         let cycle = Arc::new(Cycle { root_id, base: Mutex::new(base), local, remote });
 
         let total = plan.actions.len();
@@ -523,7 +532,7 @@ impl PairEngine {
         let dst = self.abs(path);
         let dir = dst.parent().context("sem pasta pai")?.to_path_buf();
         std::fs::create_dir_all(&dir)?;
-        let tmp = dir.join(format!(".omarchy-drive-{}-{}.tmp", now_ms(), std::process::id()));
+        let tmp = dir.join(format!(".omarchy-drive-{}.tmp", tmp_suffix()));
         let res = async {
             self.provider.download(&r.item, &tmp).await?;
             let kind = self.provider.hash_kind();

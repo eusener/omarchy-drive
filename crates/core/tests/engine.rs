@@ -116,7 +116,10 @@ impl MemProvider {
     fn remote_rename(&self, path: &str, new_name: &str) {
         let mut g = self.inner.lock().unwrap();
         let id = Self::find(&g, path).unwrap();
-        g.items.get_mut(&id).unwrap().0.name = new_name.into();
+        let it = &mut g.items.get_mut(&id).unwrap().0;
+        it.name = new_name.into();
+        // Como o Google Drive: renomear incrementa a versão.
+        it.rev = (it.rev.parse::<u64>().unwrap() + 1).to_string();
         Self::touch(&mut g, &id);
     }
 
@@ -363,6 +366,22 @@ async fn remote_rename_is_applied_without_redownload() {
     assert_eq!(read_local(&e.root, "Viagem/praia.jpg").unwrap(), b"jpeg");
     assert!(!e.root.join("Fotos").exists());
     assert_eq!(e.mem.downloads.load(Ordering::SeqCst), before);
+}
+
+#[tokio::test]
+async fn remote_file_rename_with_rev_bump_and_local_edit() {
+    let e = env(50);
+    e.mem.remote_write("a.txt", b"v1");
+    e.mem.remote_write("b.txt", b"v1");
+    e.settle().await;
+
+    e.mem.remote_rename("a.txt", "a2.txt");
+    e.mem.remote_rename("b.txt", "b2.txt");
+    write_local(&e.root, "b.txt", b"v2 local");
+    e.settle().await;
+    assert_eq!(read_local(&e.root, "a2.txt").unwrap(), b"v1");
+    assert_eq!(e.mem.remote_read("b2.txt").unwrap(), b"v2 local");
+    assert_eq!(read_local(&e.root, "b2.txt").unwrap(), b"v2 local");
 }
 
 #[tokio::test]

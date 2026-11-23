@@ -74,6 +74,11 @@ impl Action {
 #[derive(Debug, Default, Clone)]
 pub struct Plan {
     pub actions: Vec<Action>,
+    /// Estados local e remoto já com os moves detectados aplicados: as ações
+    /// após um move referem-se aos caminhos novos, então o executor deve usar
+    /// estes mapas, não os da entrada.
+    pub local: HashMap<RelPath, LocalEntry>,
+    pub remote: HashMap<RelPath, RemoteEntry>,
 }
 
 impl Plan {
@@ -378,7 +383,7 @@ pub fn plan(snap: &Snapshot) -> Plan {
         })
     });
     actions.extend(per_path);
-    Plan { actions }
+    Plan { actions, local: local.into_iter().collect(), remote: remote.into_iter().collect() }
 }
 
 #[cfg(test)]
