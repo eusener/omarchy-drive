@@ -30,7 +30,6 @@ use graph::{
 };
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
-const BASE: &str = "https://graph.microsoft.com/v1.0/me/drive";
 
 /// Até este tamanho usa upload simples (`PUT .../content`).
 const SIMPLE_UPLOAD_MAX: u64 = 4 * 1024 * 1024;
@@ -65,10 +64,20 @@ pub struct OneDrive {
     /// **não** podem receber o token.
     raw: reqwest::Client,
     root_id: OnceCell<String>,
+    /// `https://graph.microsoft.com/v1.0` (trocável nos testes de contrato).
+    graph: String,
+    /// `{graph}/me/drive`.
+    base: String,
 }
 
 impl OneDrive {
     pub fn new(tokens: TokenManager) -> Self {
+        Self::with_graph_url(tokens, GRAPH)
+    }
+
+    /// Como [`OneDrive::new`], apontando para outro endereço do Graph
+    /// (servidor falso nos testes de contrato).
+    pub fn with_graph_url(tokens: TokenManager, graph: &str) -> Self {
         let build = || {
             reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(30))
@@ -76,18 +85,21 @@ impl OneDrive {
                 .build()
                 .expect("cliente HTTP")
         };
-        Self { tokens, http: build(), raw: build(), root_id: OnceCell::new() }
+        let graph = graph.trim_end_matches('/').to_string();
+        let base = format!("{graph}/me/drive");
+        Self { tokens, http: build(), raw: build(), root_id: OnceCell::new(), graph, base }
     }
 
     /// E-mail da conta (`mail`, ou `userPrincipalName` se ausente).
     pub async fn account_email(&self) -> Result<String> {
+        let graph = &self.graph;
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Me {
             mail: Option<String>,
             user_principal_name: Option<String>,
         }
-        let me: Me = self.get_json(&format!("{GRAPH}/me?$select=mail,userPrincipalName")).await?;
+        let me: Me = self.get_json(&format!("{graph}/me?$select=mail,userPrincipalName")).await?;
         me.mail
             .filter(|m| !m.is_empty())
             .or(me.user_principal_name)
@@ -109,7 +121,8 @@ impl OneDrive {
     }
 
     async fn root_item(&self) -> Result<RemoteItem> {
-        let root = self.get_item(&format!("{BASE}/root?$select={SELECT}")).await?;
+        let base = &self.base;
+        let root = self.get_item(&format!("{base}/root?$select={SELECT}")).await?;
         let _ = self.root_id.set(root.id.clone());
         Ok(root)
     }
@@ -122,12 +135,14 @@ impl OneDrive {
     }
 
     async fn child_by_name(&self, parent_id: &str, name: &str) -> Result<RemoteItem> {
-        self.get_item(&format!("{BASE}/items/{parent_id}:/{}:?$select={SELECT}", encode_segment(name)))
+        let base = &self.base;
+        self.get_item(&format!("{base}/items/{parent_id}:/{}:?$select={SELECT}", encode_segment(name)))
             .await
     }
 
     async fn list_children(&self, id: &str) -> Result<Vec<RemoteItem>> {
-        let mut url = format!("{BASE}/items/{id}/children?$top=1000&$select={SELECT}");
+        let base = &self.base;
+        let mut url = format!("{base}/items/{id}/children?$top=1000&$select={SELECT}");
         let mut out = Vec::new();
         loop {
             let page: Page = self.get_json(&url).await?;
@@ -142,7 +157,8 @@ impl OneDrive {
     /// Listagem completa do drive via `delta` (bem mais rápida que a busca
     /// em largura quando a raiz do par é a raiz do drive).
     async fn list_all_delta(&self) -> Result<Vec<RemoteItem>> {
-        let mut url = format!("{BASE}/root/delta?$select={SELECT}");
+        let base = &self.base;
+        let mut url = format!("{base}/root/delta?$select={SELECT}");
         let mut out = Vec::new();
         loop {
             let page: Page = self.get_json(&url).await?;
@@ -155,8 +171,9 @@ impl OneDrive {
     }
 
     async fn patch_mtime(&self, id: &str, mtime_ms: i64) -> Result<RemoteItem> {
+        let base = &self.base;
         let body = json!({ "fileSystemInfo": { "lastModifiedDateTime": format_time_ms(mtime_ms) } });
-        let url = format!("{BASE}/items/{id}");
+        let url = format!("{base}/items/{id}");
         let r = http::send(&self.tokens, || self.http.patch(&url).json(&body)).await?;
         let it: DriveItem = r.json().await?;
         to_remote(&it)
@@ -170,11 +187,12 @@ impl OneDrive {
         mtime_ms: i64,
         existing_id: Option<&str>,
     ) -> Result<RemoteItem> {
+        let base = &self.base;
         let data = bytes::Bytes::from(tokio::fs::read(src).await?);
         let url = match existing_id {
-            Some(id) => format!("{BASE}/items/{id}/content"),
+            Some(id) => format!("{base}/items/{id}/content"),
             None => format!(
-                "{BASE}/items/{parent_id}:/{}:/content?@microsoft.graph.conflictBehavior=replace",
+                "{base}/items/{parent_id}:/{}:/content?@microsoft.graph.conflictBehavior=replace",
                 encode_segment(name)
             ),
         };
@@ -198,9 +216,10 @@ impl OneDrive {
         mtime_ms: i64,
         existing_id: Option<&str>,
     ) -> Result<RemoteItem> {
+        let base = &self.base;
         let create = match existing_id {
-            Some(id) => format!("{BASE}/items/{id}/createUploadSession"),
-            None => format!("{BASE}/items/{parent_id}:/{}:/createUploadSession", encode_segment(name)),
+            Some(id) => format!("{base}/items/{id}/createUploadSession"),
+            None => format!("{base}/items/{parent_id}:/{}:/createUploadSession", encode_segment(name)),
         };
         let body = json!({
             "item": {
@@ -340,11 +359,12 @@ impl Provider for OneDrive {
     }
 
     async fn resolve_folder(&self, path: &str) -> Result<RemoteItem> {
+        let base = &self.base;
         let enc = encode_path(path);
         if enc.is_empty() {
             return self.root_item().await;
         }
-        let item = match self.get_item(&format!("{BASE}/root:/{enc}:?$select={SELECT}")).await {
+        let item = match self.get_item(&format!("{base}/root:/{enc}:?$select={SELECT}")).await {
             Ok(it) => it,
             Err(e) if http::status_of(&e) == Some(StatusCode::NOT_FOUND) => {
                 // Cria os segmentos que faltam, um a um.
@@ -363,7 +383,8 @@ impl Provider for OneDrive {
     }
 
     async fn start_cursor(&self, _root_id: &str) -> Result<String> {
-        let page: Page = self.get_json(&format!("{BASE}/root/delta?token=latest&$select={SELECT}")).await?;
+        let base = &self.base;
+        let page: Page = self.get_json(&format!("{base}/root/delta?token=latest&$select={SELECT}")).await?;
         match page.next()? {
             PageNext::Done(c) => Ok(c),
             // Não deveria acontecer com token=latest; segue até o fim.
@@ -418,10 +439,11 @@ impl Provider for OneDrive {
     }
 
     async fn download(&self, item: &RemoteItem, dest: &Path) -> Result<()> {
+        let base = &self.base;
         if item.is_dir || item.native {
             bail!("\"{}\" não tem conteúdo para baixar", item.name);
         }
-        let url = format!("{BASE}/items/{}/content", item.id);
+        let url = format!("{base}/items/{}/content", item.id);
         // O Graph responde 302 para uma URL pré-autenticada em outro host;
         // o reqwest segue e remove o Authorization (troca de host).
         let r = http::send(&self.tokens, || self.http.get(&url)).await?;
@@ -455,7 +477,8 @@ impl Provider for OneDrive {
     }
 
     async fn create_folder(&self, parent_id: &str, name: &str) -> Result<RemoteItem> {
-        let url = format!("{BASE}/items/{parent_id}/children");
+        let base = &self.base;
+        let url = format!("{base}/items/{parent_id}/children");
         let body = json!({
             "name": name,
             "folder": {},
@@ -475,14 +498,16 @@ impl Provider for OneDrive {
     }
 
     async fn move_item(&self, id: &str, new_parent_id: &str, new_name: &str) -> Result<RemoteItem> {
-        let url = format!("{BASE}/items/{id}");
+        let base = &self.base;
+        let url = format!("{base}/items/{id}");
         let body = json!({ "name": new_name, "parentReference": { "id": new_parent_id } });
         let r = http::send(&self.tokens, || self.http.patch(&url).json(&body)).await?;
         to_remote(&r.json::<DriveItem>().await?)
     }
 
     async fn trash(&self, id: &str) -> Result<()> {
-        let url = format!("{BASE}/items/{id}");
+        let base = &self.base;
+        let url = format!("{base}/items/{id}");
         match http::send(&self.tokens, || self.http.delete(&url)).await {
             Ok(_) => Ok(()),
             Err(e) if http::status_of(&e) == Some(StatusCode::NOT_FOUND) => Ok(()),
@@ -490,7 +515,12 @@ impl Provider for OneDrive {
         }
     }
 
+    fn validate_name(&self, path: &str) -> std::result::Result<(), String> {
+        graph::validate_path(path)
+    }
+
     async fn quota(&self) -> Result<Quota> {
+        let base = &self.base;
         #[derive(Deserialize)]
         struct Drive {
             quota: Option<Q>,
@@ -500,7 +530,7 @@ impl Provider for OneDrive {
             used: Option<u64>,
             total: Option<u64>,
         }
-        let d: Drive = self.get_json(&format!("{BASE}?$select=quota")).await?;
+        let d: Drive = self.get_json(&format!("{base}?$select=quota")).await?;
         let q = d.quota.context("o drive não informou cota")?;
         Ok(Quota { used: q.used.unwrap_or(0), total: q.total })
     }

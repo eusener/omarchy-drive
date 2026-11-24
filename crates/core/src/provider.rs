@@ -72,4 +72,10 @@ pub trait Provider: Send + Sync {
     async fn trash(&self, id: &str) -> Result<()>;
 
     async fn quota(&self) -> Result<Quota>;
+
+    /// Confere se o provedor aceita o caminho (relativo à raiz do drive).
+    /// `Err` traz o motivo; o planejador não envia o item e mostra um aviso.
+    fn validate_name(&self, _path: &str) -> std::result::Result<(), String> {
+        Ok(())
+    }
 }

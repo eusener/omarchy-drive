@@ -30,6 +30,12 @@ struct MemProvider {
     uploads: AtomicUsize,
     /// Simula o provedor recusando o refresh token.
     auth_expired: std::sync::atomic::AtomicBool,
+    /// Próxima consulta de mudanças responde "cursor inválido" (410 do Graph).
+    reset_next: std::sync::atomic::AtomicBool,
+    /// Recusa nomes com `:` (como o OneDrive).
+    strict_names: std::sync::atomic::AtomicBool,
+    /// Listagens completas feitas.
+    listings: AtomicUsize,
 }
 
 impl MemProvider {
@@ -169,6 +175,7 @@ impl Provider for MemProvider {
     }
     async fn list_tree(&self, root: &str) -> Result<Vec<RemoteItem>> {
         // Descendentes de `root` (a raiz do par ou uma subpasta).
+        self.listings.fetch_add(1, Ordering::SeqCst);
         let g = self.inner.lock().unwrap();
         let mut out = Vec::new();
         let mut stack = vec![root.to_string()];
@@ -184,6 +191,9 @@ impl Provider for MemProvider {
         if self.auth_expired.load(Ordering::SeqCst) {
             return Err(anyhow::Error::from(AuthError::Expired("Token has been expired or revoked.".into()))
                 .context("listando mudanças"));
+        }
+        if self.reset_next.swap(false, Ordering::SeqCst) {
+            return Ok(ChangeBatch { reset: true, ..Default::default() });
         }
         let g = self.inner.lock().unwrap();
         let from: usize = cursor.parse()?;
@@ -265,6 +275,12 @@ impl Provider for MemProvider {
     }
     async fn quota(&self) -> Result<Quota> {
         Ok(Quota { used: 0, total: None })
+    }
+    fn validate_name(&self, path: &str) -> std::result::Result<(), String> {
+        if self.strict_names.load(Ordering::SeqCst) && path.contains(':') {
+            return Err("o OneDrive não aceita o caractere :".into());
+        }
+        Ok(())
     }
 }
 
@@ -580,4 +596,68 @@ async fn varredura_incremental_usa_so_os_caminhos_sujos() {
 
     // Uma completa depois de tudo não encontra diferença.
     assert_eq!(e.engine.sync_once(false).await.unwrap().executed, 0);
+}
+
+#[tokio::test]
+async fn cursor_invalidado_relista_sem_exclusoes_falsas() {
+    let e = env(50);
+    for (p, d) in [("a.txt", "A"), ("Docs/b.txt", "B"), ("Docs/Sub/c.txt", "C"), ("vai-sumir.txt", "X")] {
+        write_local(&e.root, p, d.as_bytes());
+    }
+    e.settle().await;
+    let (up, down) = (e.mem.uploads.load(Ordering::SeqCst), e.mem.downloads.load(Ordering::SeqCst));
+
+    // Cursor invalidado com a árvore inalterada: relista e não faz nada.
+    let listings = e.mem.listings.load(Ordering::SeqCst);
+    e.mem.reset_next.store(true, Ordering::SeqCst);
+    let r = e.sync().await;
+    assert_eq!(e.mem.listings.load(Ordering::SeqCst), listings + 1, "deveria relistar o drive");
+    assert_eq!(r.executed, 0, "{r:?}");
+    assert_eq!(e.mem.uploads.load(Ordering::SeqCst), up);
+    assert_eq!(e.mem.downloads.load(Ordering::SeqCst), down);
+    for p in ["a.txt", "Docs/b.txt", "Docs/Sub/c.txt", "vai-sumir.txt"] {
+        assert!(read_local(&e.root, p).is_some(), "{p} sumiu");
+    }
+
+    // Mudanças feitas enquanto o cursor estava inválido chegam pela listagem:
+    // só o que sumiu de verdade é apagado.
+    e.mem.remote_write("novo.txt", b"N");
+    {
+        let id = { let g = e.mem.inner.lock().unwrap(); MemProvider::find(&g, "vai-sumir.txt").unwrap() };
+        e.mem.trash(&id).await.unwrap();
+    }
+    e.mem.reset_next.store(true, Ordering::SeqCst);
+    e.settle().await;
+    assert_eq!(read_local(&e.root, "novo.txt").unwrap(), b"N");
+    assert!(read_local(&e.root, "vai-sumir.txt").is_none());
+    for p in ["a.txt", "Docs/b.txt", "Docs/Sub/c.txt"] {
+        assert!(read_local(&e.root, p).is_some(), "{p} sumiu");
+        assert!(e.mem.remote_read(p).is_some(), "{p} sumiu do remoto");
+    }
+    // O cursor novo vale: o ciclo seguinte é incremental e ocioso.
+    let listings = e.mem.listings.load(Ordering::SeqCst);
+    assert_eq!(e.sync().await.executed, 0);
+    assert_eq!(e.mem.listings.load(Ordering::SeqCst), listings);
+}
+
+#[tokio::test]
+async fn nome_recusado_pelo_provedor_vira_aviso() {
+    let e = env(50);
+    e.mem.strict_names.store(true, Ordering::SeqCst);
+    write_local(&e.root, "relatório: final.txt", b"R");
+    write_local(&e.root, "ok.txt", b"O");
+    e.settle().await;
+    assert_eq!(e.mem.remote_names(), vec!["ok.txt".to_string()]);
+    assert_eq!(read_local(&e.root, "relatório: final.txt").unwrap(), b"R", "o arquivo local fica intacto");
+    let st = e.status.snapshot().pairs["t"].clone();
+    assert!(st.warnings.iter().any(|w| w.contains("relatório: final.txt")), "{:?}", st.warnings);
+    assert!(st.last_error.is_none());
+    // Ciclos seguintes: nada a fazer, aviso mantido.
+    assert_eq!(e.sync().await.executed, 0);
+    assert!(e.status.snapshot().pairs["t"].warnings.iter().any(|w| w.contains("relatório: final.txt")));
+    // Renomeado para um nome aceito, sobe e o aviso some.
+    std::fs::rename(e.root.join("relatório: final.txt"), e.root.join("relatório final.txt")).unwrap();
+    e.settle().await;
+    assert!(e.mem.remote_read("relatório final.txt").is_some());
+    assert!(e.status.snapshot().pairs["t"].warnings.is_empty());
 }

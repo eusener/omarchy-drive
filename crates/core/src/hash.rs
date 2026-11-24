@@ -161,6 +161,48 @@ mod tests {
         }
     }
 
+    /// QuickXorHash pela definição, bit a bit: o byte `i` entra por XOR na
+    /// posição `(i * 11) mod 160` de um registrador circular de 160 bits, e o
+    /// tamanho (u64 little-endian) entra por XOR nos últimos 8 bytes.
+    fn quickxor_by_definition(data: &[u8]) -> String {
+        let mut bits = [false; 160];
+        for (i, b) in data.iter().enumerate() {
+            let start = (i * 11) % 160;
+            for k in 0..8 {
+                if b >> k & 1 == 1 {
+                    let p = (start + k) % 160;
+                    bits[p] = !bits[p];
+                }
+            }
+        }
+        let mut out = [0u8; 20];
+        for (p, on) in bits.iter().enumerate() {
+            if *on {
+                out[p / 8] |= 1 << (p % 8);
+            }
+        }
+        for (i, b) in (data.len() as u64).to_le_bytes().iter().enumerate() {
+            out[12 + i] ^= b;
+        }
+        base64::engine::general_purpose::STANDARD.encode(out)
+    }
+
+    #[test]
+    fn quickxor_confere_com_a_definicao() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        for len in [1usize, 2, 15, 159, 160, 161, 320, 1000, 70_001] {
+            let data: Vec<u8> = (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    seed as u8
+                })
+                .collect();
+            assert_eq!(hash_bytes(HashKind::QuickXor, &data), quickxor_by_definition(&data), "len {len}");
+        }
+    }
+
     #[test]
     fn md5_known() {
         assert_eq!(hash_bytes(HashKind::Md5, b"abc"), "900150983cd24fb0d6963f7d28e17f72");

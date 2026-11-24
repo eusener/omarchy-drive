@@ -1,0 +1,29 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+  "@odata.deltaLink": "{GRAPH}/me/drive/root/delta?token=cursor-novo",
+  "value": [
+    {
+      "id": "B9",
+      "deleted": {"state": "deleted"},
+      "parentReference": {"driveId": "d1", "driveType": "personal", "id": "F1"}
+    },
+    {
+      "id": "N1",
+      "name": "Caderno",
+      "size": 1024,
+      "package": {"type": "oneNote"},
+      "parentReference": {"driveId": "d1", "driveType": "personal", "id": "ROOTID"},
+      "fileSystemInfo": {"lastModifiedDateTime": "2024-05-01T10:00:00Z"}
+    },
+    {
+      "id": "A1",
+      "name": "relatório final.txt",
+      "size": 31,
+      "eTag": "\"{A1},8\"",
+      "cTag": "\"c:{A1},7\"",
+      "file": {"mimeType": "text/plain", "hashes": {"quickXorHash": "MF73M+tYTpHukjCuEmQ5SBzQWhM="}},
+      "parentReference": {"driveId": "d1", "driveType": "personal", "id": "F1"},
+      "fileSystemInfo": {"lastModifiedDateTime": "2024-05-03T09:30:15.250Z"}
+    }
+  ]
+}

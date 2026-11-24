@@ -1,0 +1,12 @@
+{
+  "error": {
+    "code": "resyncRequired",
+    "message": "Resync required. Replace any local items with the server's version (including deletes) if you're sure that the service was up to date with your local changes when you last sync'd. Upload any local changes that the server doesn't know about.",
+    "innerError": {
+      "code": "resyncChangesApplyDifferences",
+      "date": "2024-06-02T08:00:00",
+      "request-id": "00000000-0000-0000-0000-000000000000",
+      "client-request-id": "00000000-0000-0000-0000-000000000000"
+    }
+  }
+}

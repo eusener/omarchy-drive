@@ -368,7 +368,14 @@ impl PairEngine {
         }
 
         let snap = Snapshot { base: base.clone(), local, remote };
-        let mut plan = planner::plan(&snap);
+        let prefix = self.pair.remote.trim_matches('/');
+        let mut plan = planner::plan_checked(&snap, |rel| {
+            if prefix.is_empty() {
+                self.provider.validate_name(rel)
+            } else {
+                self.provider.validate_name(&format!("{prefix}/{rel}"))
+            }
+        });
         let plan_warnings = std::mem::take(&mut plan.warnings);
         self.mark_touched(&plan.actions);
         if self.pair.download_only {

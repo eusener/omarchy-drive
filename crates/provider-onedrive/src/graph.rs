@@ -243,6 +243,49 @@ pub fn next_expected_start(v: &Value) -> Option<u64> {
     first.split('-').next()?.trim().parse().ok()
 }
 
+/// Tamanho máximo do caminho decodificado no OneDrive, em caracteres.
+pub const MAX_PATH_CHARS: usize = 400;
+
+/// Regras de nome do OneDrive/SharePoint para um caminho relativo à raiz do
+/// drive. `Err` traz o motivo em português.
+pub fn validate_path(path: &str) -> Result<(), String> {
+    let total = path.encode_utf16().count();
+    if total > MAX_PATH_CHARS {
+        return Err(format!("caminho com {total} caracteres; o OneDrive aceita até {MAX_PATH_CHARS}"));
+    }
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        validate_segment(seg)?;
+    }
+    Ok(())
+}
+
+fn validate_segment(name: &str) -> Result<(), String> {
+    if let Some(c) = name.chars().find(|c| matches!(c, '"' | '*' | ':' | '<' | '>' | '?' | '\\' | '|')) {
+        return Err(format!("o OneDrive não aceita o caractere {c} em \"{name}\""));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(format!("o OneDrive não aceita caracteres de controle em \"{name}\""));
+    }
+    if name.starts_with(' ') || name.ends_with(' ') {
+        return Err(format!("o OneDrive não aceita espaço no início ou no fim de \"{name}\""));
+    }
+    let lower = name.to_lowercase();
+    let reserved = matches!(lower.as_str(), "con" | "prn" | "aux" | "nul" | ".lock" | "desktop.ini")
+        || ((lower.starts_with("com") || lower.starts_with("lpt"))
+            && lower.len() == 4
+            && lower.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        return Err(format!("\"{name}\" é um nome reservado no OneDrive"));
+    }
+    if lower.contains("_vti_") {
+        return Err(format!("o OneDrive não aceita \"_vti_\" no nome \"{name}\""));
+    }
+    if name.starts_with("~$") {
+        return Err(format!("o OneDrive não aceita nomes começando com \"~$\" (\"{name}\")"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +432,36 @@ mod tests {
         let s = format_time_ms(1_714_557_600_123);
         assert_eq!(s, "2024-05-01T10:00:00.123Z");
         assert_eq!(parse_time_ms(&s), Some(1_714_557_600_123));
+    }
+
+    #[test]
+    fn nomes_recusados() {
+        let err = validate_path("Docs/relatório: final.txt").unwrap_err();
+        assert!(err.contains(':') && err.contains("relatório: final.txt"), "{err}");
+        for bad in ["CON", "con", "Pasta/nul", "COM1", "lpt9", ".lock", "Desktop.ini", "a_vti_b",
+                    "~$planilha.xlsx", " espaço", "fim ", "a*b", "a?b", "a|b", "a<b", "a>b", "a\"b", "a\\b", "tab\tx"] {
+            assert!(validate_path(bad).is_err(), "{bad:?} deveria ser recusado");
+        }
+    }
+
+    #[test]
+    fn nomes_aceitos() {
+        for ok in ["", "relatório final.txt", "Docs/CON.txt", "console", "COM10", "COMx", "~arquivo",
+                   "a~$b", "ação #1 (cópia) [v2] {x} & y + z = 100% ; ok, 'aspas'.txt", ".gitignore", "a.lock"] {
+            assert_eq!(validate_path(ok), Ok(()), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn caminho_longo() {
+        let seg = "a".repeat(100);
+        let p400 = [seg.as_str(); 4].join("/");
+        let p400 = &p400[..400];
+        assert_eq!(validate_path(p400), Ok(()));
+        let longo = format!("{p400}b");
+        assert!(validate_path(&longo).unwrap_err().contains("401"));
+        // Conta caracteres, não bytes: 400 letras acentuadas passam.
+        assert_eq!(validate_path(&"é".repeat(400)), Ok(()));
     }
 
     #[test]

@@ -163,6 +163,12 @@ fn relocate<T>(
 }
 
 pub fn plan(snap: &Snapshot) -> Plan {
+    plan_checked(snap, |_| Ok(()))
+}
+
+/// Como [`plan`], recusando o que o provedor não aceita: `check` recebe o
+/// caminho relativo ao par e devolve o motivo da recusa.
+pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>) -> Plan {
     let mut base: BTreeMap<RelPath, BaseEntry> =
         snap.base.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut local: BTreeMap<RelPath, LocalEntry> =
@@ -402,6 +408,41 @@ pub fn plan(snap: &Snapshot) -> Plan {
         }
     }
 
+    // ---- 4b. Nomes que o provedor não aceita ----
+    // Uploads, pastas e moves para um caminho recusado ficam de fora com um
+    // aviso (um só por subárvore); o resto do ciclo segue normalmente. Um
+    // move recusado leva junto tudo abaixo do destino, para a base continuar
+    // no caminho antigo e o move ser tentado de novo no ciclo seguinte.
+    let mut rejected: Vec<RelPath> = Vec::new();
+    let mut moved_away: Vec<RelPath> = Vec::new();
+    let mut reject = |path: &str, rejected: &mut Vec<RelPath>| -> bool {
+        if rejected.iter().any(|r| path == r || is_under(path, r)) {
+            return true;
+        }
+        match check(path) {
+            Ok(()) => false,
+            Err(why) => {
+                warnings.push(format!("não enviado: {path} ({why})"));
+                rejected.push(path.to_string());
+                true
+            }
+        }
+    };
+    actions.retain(|a| match a {
+        Action::MoveRemote { to, .. } if reject(to, &mut rejected) => {
+            moved_away.push(to.clone());
+            false
+        }
+        _ => true,
+    });
+    per_path.retain(|a| {
+        let path = a.path();
+        if moved_away.iter().any(|m| path == m || is_under(path, m)) {
+            return false;
+        }
+        !(matches!(a, Action::Upload { .. } | Action::CreateRemoteDir { .. }) && reject(path, &mut rejected))
+    });
+
     // ---- 5. Ordenação ----
     per_path.sort_by(|a, b| {
         a.phase().cmp(&b.phase()).then_with(|| match a.phase() {
@@ -499,6 +540,60 @@ mod tests {
     fn native(mut r: RemoteEntry) -> RemoteEntry {
         r.item.native = true;
         r
+    }
+
+    /// Regras simples de teste: recusa `:`, `CON` e caminhos acima de 20 caracteres.
+    fn strict(path: &str) -> Result<(), String> {
+        if path.chars().count() > 20 {
+            return Err("caminho longo".into());
+        }
+        for seg in path.split('/') {
+            if seg.contains(':') || seg == "CON" {
+                return Err(format!("nome inválido: {seg}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nome_recusado_vira_aviso_e_o_resto_segue() {
+        let s = snap(
+            vec![],
+            vec![
+                local_mod("relatório: final.txt", 1, "a"),
+                local_mod("CON", 2, "b"),
+                local_dir("pasta:x", 3),
+                local_mod("pasta:x/a.txt", 4, "c"),
+                local_mod("pasta:x/b.txt", 5, "c"),
+                local_mod("nome-de-arquivo-comprido.txt", 6, "e"),
+                local_mod("ok.txt", 7, "d"),
+            ],
+            vec![],
+        );
+        let p = plan_checked(&s, strict);
+        assert_eq!(p.actions, vec![Action::Upload { path: "ok.txt".into() }]);
+        assert_eq!(p.warnings.len(), 4, "{:?}", p.warnings);
+        for name in ["relatório: final.txt", "CON", "nome-de-arquivo-comprido.txt"] {
+            assert!(p.warnings.iter().any(|w| w.contains(name)), "{name}");
+        }
+        // Um aviso só para a pasta recusada, não um por arquivo dentro dela.
+        assert!(p.warnings.iter().any(|w| w.starts_with("não enviado: pasta:x (")));
+        // Sem validação, tudo sobe.
+        assert_eq!(plan(&s).actions.len(), 7);
+    }
+
+    #[test]
+    fn rename_local_para_nome_recusado_nao_mexe_no_remoto() {
+        let mut x = local_same("E:/x", 11);
+        x.hash = Some("h".into());
+        let s = snap(
+            vec![base_dir("D", "DD", 10), base_file("D/x", "X", "h", 11)],
+            vec![local_dir("E:", 10), x],
+            vec![remote_dir("D", "DD"), remote_file("D/x", "X", "h")],
+        );
+        let p = plan_checked(&s, strict);
+        assert!(p.actions.is_empty(), "{:?}", p.actions);
+        assert_eq!(p.warnings.len(), 1);
     }
 
     #[test]

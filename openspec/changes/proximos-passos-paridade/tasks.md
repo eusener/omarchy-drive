@@ -60,9 +60,9 @@
 
 ## 8. OneDrive validado
 
-- [ ] 8.1 Criar testes de contrato do provedor com respostas gravadas do Graph: delta com `deltaLink`, `410`/`resyncRequired`, upload session e `quickXorHash`; verificar `cargo test -p omarchy-drive-onedrive`
-- [ ] 8.2 Adicionar `Provider::validate_name` (padrão `Ok`) com as regras do OneDrive; o planejador transforma uploads recusados em aviso; verificar com testes de `relatório: final.txt`, `CON` e caminho longo
-- [ ] 8.3 Confirmar que `ChangeBatch.reset` faz listagem completa sem exclusões falsas; verificar com teste de motor que simula reset com a árvore inalterada e confere zero ações
+- [x] 8.1 Criar testes de contrato do provedor com respostas gravadas do Graph: delta com `deltaLink`, `410`/`resyncRequired`, upload session e `quickXorHash`; verificar `cargo test -p omarchy-drive-onedrive`
+- [x] 8.2 Adicionar `Provider::validate_name` (padrão `Ok`) com as regras do OneDrive; o planejador transforma uploads recusados em aviso; verificar com testes de `relatório: final.txt`, `CON` e caminho longo
+- [x] 8.3 Confirmar que `ChangeBatch.reset` faz listagem completa sem exclusões falsas; verificar com teste de motor que simula reset com a árvore inalterada e confere zero ações
 - [ ] 8.4 Guiar o usuário no cadastro do app no Microsoft Entra e rodar `setup microsoft` (ou usar o client padrão do grupo 4); verificar com `account connect --provider onedrive` concluído
 - [ ] 8.5 Rodar a bateria real num par de teste (upload de 20 MB em partes, download, rename remoto sem retransferir, edição local, conflito, exclusão para a lixeira, ciclo ocioso com zero ações) e corrigir os defeitos com teste de regressão; verificar cada item pela API do Graph e mudar a linha do roadmap para ✅
 

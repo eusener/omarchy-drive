@@ -1,0 +1,36 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+  "@odata.nextLink": "{GRAPH}/me/drive/root/delta?token=pagina2",
+  "value": [
+    {
+      "id": "ROOTID",
+      "name": "root",
+      "root": {},
+      "folder": {"childCount": 2},
+      "parentReference": {"driveId": "d1", "driveType": "personal"},
+      "fileSystemInfo": {"createdDateTime": "2024-01-01T00:00:00Z", "lastModifiedDateTime": "2024-06-01T12:00:00Z"}
+    },
+    {
+      "id": "F1",
+      "name": "Documentos",
+      "size": 42,
+      "eTag": "\"{F1},4\"",
+      "cTag": "\"adDpGMQ\"",
+      "folder": {"childCount": 1, "view": {"viewType": "thumbnails"}},
+      "parentReference": {"driveId": "d1", "driveType": "personal", "id": "ROOTID", "path": "/drive/root:"},
+      "fileSystemInfo": {"createdDateTime": "2024-05-01T10:00:00Z", "lastModifiedDateTime": "2024-05-01T10:00:00Z"},
+      "lastModifiedDateTime": "2024-06-02T08:00:00Z"
+    },
+    {
+      "id": "A1",
+      "name": "relatório.txt",
+      "size": 31,
+      "eTag": "\"{A1},7\"",
+      "cTag": "\"c:{A1},7\"",
+      "file": {"mimeType": "text/plain", "hashes": {"quickXorHash": "MF73M+tYTpHukjCuEmQ5SBzQWhM=", "sha1Hash": "0000000000000000000000000000000000000000"}},
+      "parentReference": {"driveId": "d1", "driveType": "personal", "id": "F1", "path": "/drive/root:/Documentos"},
+      "fileSystemInfo": {"createdDateTime": "2024-05-01T10:00:00Z", "lastModifiedDateTime": "2024-05-03T09:30:15.250Z"},
+      "lastModifiedDateTime": "2024-06-02T08:00:00Z"
+    }
+  ]
+}

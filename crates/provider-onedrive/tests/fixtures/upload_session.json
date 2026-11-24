@@ -1,0 +1,6 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#microsoft.graph.uploadSession",
+  "expirationDateTime": "2024-06-09T08:00:00.000Z",
+  "nextExpectedRanges": ["0-"],
+  "uploadUrl": "{RAW}/up/sessao-1?guid=abc&path=~tmp"
+}
