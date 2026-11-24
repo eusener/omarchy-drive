@@ -1,8 +1,7 @@
 //! OAuth 2.0 para apps de desktop: Authorization Code + PKCE com redirect
 //! loopback (RFC 8252), usado por Google e Microsoft.
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -11,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+use crate::token_store::TokenStore;
 
 #[derive(Debug, Clone)]
 pub struct OAuthEndpoints {
@@ -181,47 +182,46 @@ pub async fn authorize_interactive(ep: &OAuthEndpoints) -> Result<TokenSet> {
     })
 }
 
-pub fn save_tokens(path: &std::path::Path, t: &TokenSet) -> Result<()> {
-    if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d)?;
-        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(t)?)?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
-}
-
 /// Mantém o access token válido, renovando e persistindo quando necessário.
+/// Os tokens são lidos do armazenamento no primeiro uso (o keyring pode
+/// estar bloqueado na partida e ser desbloqueado depois).
 pub struct TokenManager {
     ep: OAuthEndpoints,
-    path: PathBuf,
+    store: Arc<dyn TokenStore>,
+    account: String,
     http: reqwest::Client,
-    tokens: tokio::sync::Mutex<TokenSet>,
+    tokens: tokio::sync::Mutex<Option<TokenSet>>,
 }
 
 impl TokenManager {
-    pub fn load(ep: OAuthEndpoints, path: PathBuf) -> Result<Self> {
-        let raw = std::fs::read(&path).with_context(|| {
-            format!("conta não autorizada ({}). Rode `omarchy-drive account add` ou `account reauth`", path.display())
-        })?;
-        let tokens: TokenSet = serde_json::from_slice(&raw)?;
-        Ok(Self { ep, path, http: reqwest::Client::new(), tokens: tokio::sync::Mutex::new(tokens) })
+    pub fn new(ep: OAuthEndpoints, store: Arc<dyn TokenStore>, account: impl Into<String>) -> Self {
+        Self {
+            ep,
+            store,
+            account: account.into(),
+            http: reqwest::Client::new(),
+            tokens: tokio::sync::Mutex::new(None),
+        }
     }
 
     pub async fn access_token(&self) -> Result<String> {
-        let mut t = self.tokens.lock().await;
+        let mut guard = self.tokens.lock().await;
+        if guard.is_none() {
+            *guard = Some(self.store.load(&self.account).await?);
+        }
+        let t = guard.as_mut().expect("carregado acima");
         if t.expires_at > now() + 60 {
             return Ok(t.access_token.clone());
         }
-        self.refresh_locked(&mut t).await?;
+        self.refresh_locked(t).await?;
         Ok(t.access_token.clone())
     }
 
     /// Força renovação (ex.: após um 401).
     pub async fn invalidate(&self) {
-        self.tokens.lock().await.expires_at = 0;
+        if let Some(t) = self.tokens.lock().await.as_mut() {
+            t.expires_at = 0;
+        }
     }
 
     async fn refresh_locked(&self, t: &mut TokenSet) -> Result<()> {
@@ -248,7 +248,8 @@ impl TokenManager {
             t.refresh_token = rt;
         }
         t.expires_at = now() + r.expires_in.unwrap_or(3600);
-        save_tokens(&self.path, t)
+        // Grava no mesmo armazenamento de onde leu.
+        self.store.save(&self.account, t).await
     }
 }
 
@@ -274,9 +275,10 @@ mod tests {
         format!("http://{addr}/token")
     }
 
-    fn manager(token_url: String, dir: &std::path::Path) -> TokenManager {
-        let path = dir.join("t.json");
-        save_tokens(&path, &TokenSet { access_token: "a".into(), refresh_token: "r".into(), expires_at: 0 }).unwrap();
+    async fn manager(token_url: String, dir: &std::path::Path) -> TokenManager {
+        let store = Arc::new(crate::token_store::FileStore::new(dir.to_path_buf()));
+        let t = TokenSet { access_token: "a".into(), refresh_token: "r".into(), expires_at: 0 };
+        store.save("t", &t).await.unwrap();
         let ep = OAuthEndpoints {
             auth_url: "http://127.0.0.1/auth".into(),
             token_url,
@@ -286,14 +288,14 @@ mod tests {
             redirect_host: "127.0.0.1".into(),
             extra_auth_params: vec![],
         };
-        TokenManager::load(ep, path).unwrap()
+        TokenManager::new(ep, store, "t")
     }
 
     #[tokio::test]
     async fn invalid_grant_vira_login_expirado() {
         let dir = tempfile::tempdir().unwrap();
         let url = fake_token_server(400, r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#).await;
-        let err = manager(url, dir.path()).access_token().await.unwrap_err();
+        let err = manager(url, dir.path()).await.access_token().await.unwrap_err();
         assert!(is_auth_expired(&err), "{err:#}");
         assert!(format!("{err:#}").contains("expired or revoked"));
     }
@@ -302,7 +304,7 @@ mod tests {
     async fn erro_de_servidor_nao_e_login_expirado() {
         let dir = tempfile::tempdir().unwrap();
         let url = fake_token_server(503, r#"{"error":"backend_error"}"#).await;
-        let err = manager(url, dir.path()).access_token().await.unwrap_err();
+        let err = manager(url, dir.path()).await.access_token().await.unwrap_err();
         assert!(!is_auth_expired(&err), "{err:#}");
     }
 

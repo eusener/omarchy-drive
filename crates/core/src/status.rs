@@ -73,6 +73,9 @@ pub struct StatusDoc {
     /// Contas configuradas (versão 2 em diante).
     #[serde(default)]
     pub accounts: BTreeMap<String, AccountStatus>,
+    /// Avisos gerais do daemon (ex.: tokens em arquivo por falta de keyring).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
 }
 
 /// Versão atual do formato de `status.json`.
@@ -139,6 +142,10 @@ impl StatusHub {
             d.clone()
         };
         self.write(&snapshot);
+    }
+
+    pub fn set_notices(&self, notices: Vec<String>) {
+        self.doc.lock().unwrap().notices = notices;
     }
 
     /// Marca o estado de autenticação de uma conta. Devolve o estado anterior.

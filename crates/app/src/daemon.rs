@@ -12,6 +12,7 @@ use omarchy_drive_core::config::{Config, Dirs, Settings};
 use omarchy_drive_core::engine::{PairEngine, ScanScope};
 use omarchy_drive_core::state::State;
 use omarchy_drive_core::oauth::is_auth_expired;
+use omarchy_drive_core::token_store::{self, TokenStore, is_keyring_locked};
 use omarchy_drive_core::status::{AuthState, PairState, StatusHub};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -35,6 +36,7 @@ struct PairHandle {
 struct Supervisor {
     dirs: Dirs,
     status: Arc<StatusHub>,
+    tokens: Arc<dyn TokenStore>,
     cfg: Config,
     pairs: HashMap<String, PairHandle>,
 }
@@ -110,9 +112,9 @@ fn looks_offline(e: &anyhow::Error) -> bool {
 }
 
 impl Supervisor {
-    fn new(dirs: Dirs, status: Arc<StatusHub>) -> Result<Self> {
+    fn new(dirs: Dirs, status: Arc<StatusHub>, tokens: Arc<dyn TokenStore>) -> Result<Self> {
         let cfg = Config::load(&dirs.config_file())?;
-        Ok(Self { dirs, status, cfg, pairs: HashMap::new() })
+        Ok(Self { dirs, status, tokens, cfg, pairs: HashMap::new() })
     }
 
     fn start_all(&mut self) {
@@ -170,7 +172,7 @@ impl Supervisor {
             .cfg
             .account(&pair.account)
             .with_context(|| format!("conta {} não existe", pair.account))?;
-        let provider = providers::build(&self.cfg, &self.dirs, account)?;
+        let provider = providers::build(&self.cfg, &self.tokens, account)?;
         let state = State::open(&self.dirs.pair_db(&pair.name))?;
         let engine =
             PairEngine::new(pair.clone(), provider, state, self.cfg.settings.clone(), self.status.clone())?;
@@ -387,7 +389,8 @@ async fn pair_loop(
                 }
             }
             Err(e) => {
-                let offline = looks_offline(&e);
+                // Keyring bloqueado: espera o desbloqueio sem notificar nem pedir senha.
+                let offline = looks_offline(&e) || is_keyring_locked(&e);
                 warn!(pair = %name, "ciclo falhou: {e:#}");
                 status.update(&name, |s| {
                     s.state = if offline { PairState::Offline } else { PairState::Error };
@@ -439,8 +442,16 @@ pub async fn run(dirs: Dirs) -> Result<()> {
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
 
     let status = Arc::new(StatusHub::new(Some(status_file.clone())));
+    let tokens = token_store::detect(&dirs.tokens_dir()).await;
+    info!(armazenamento = tokens.kind(), "tokens");
+    if tokens.kind() == "arquivo" {
+        status.set_notices(vec![
+            "tokens guardados em arquivo (sem Secret Service na sessão); instale e ative o gnome-keyring para usar o chaveiro"
+                .into(),
+        ]);
+    }
     status.flush();
-    let mut sup = Supervisor::new(dirs, status)?;
+    let mut sup = Supervisor::new(dirs, status, tokens)?;
     sup.start_all();
     info!(pares = sup.cfg.pairs.len(), "omarchy-drive iniciado");
 

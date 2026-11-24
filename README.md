@@ -131,8 +131,15 @@ aparece como aviso no status.
 pausa ou retoma. No painel, as teclas são `S` (sincronizar), `P` (pausar/retomar),
 `O` (abrir pasta) e `C` (confirmar exclusões retidas).
 
-Configuração: `~/.config/omarchy-drive/config.toml`. Tokens: `~/.local/state/omarchy-drive/tokens/`
-(arquivos com permissão 0600).
+Configuração: `~/.config/omarchy-drive/config.toml`.
+
+**Tokens** ficam no chaveiro da sessão (Secret Service: gnome-keyring, KWallet), um item por conta
+chamado "omarchy-drive: <conta>" (`secret-tool search application omarchy-drive` lista os itens).
+Arquivos de token antigos são migrados automaticamente na primeira leitura e apagados depois que o
+item é relido do chaveiro. Sem Secret Service na sessão, os tokens ficam em
+`~/.local/state/omarchy-drive/tokens/<conta>.json` (permissão 0600, pasta 0700), e
+`omarchy-drive status` avisa isso. Com o chaveiro bloqueado, os pares ficam "offline" esperando o
+desbloqueio: o omarchy-drive nunca abre o pedido de senha nem cai para arquivo nesse caso.
 
 ## Desenvolvimento
 
@@ -154,7 +161,7 @@ OMARCHY_DRIVE_LOG=debug cargo run -p omarchy-drive -- daemon
 | Upload resumable/chunked, retry com backoff, renovação de token | ✅ |
 | Daemon systemd, inotify, notificações de desktop, widget na barra | ✅ |
 | **Teste contra as APIs reais** (só há testes com provedor em memória) | ⏳ próximo passo |
-| Tokens no keyring (Secret Service / gnome-keyring) em vez de arquivo | ⏳ |
+| Tokens no keyring (Secret Service / gnome-keyring), com migração e fallback | ✅ |
 | Google Docs/Planilhas/Apresentações como atalhos `.gdoc`/`.gsheet`/`.gslides` | ✅ |
 | Exportação de Docs para .docx/.xlsx | ⏳ |
 | Drives compartilhados (Google) e SharePoint/bibliotecas (OneDrive) | ⏳ |

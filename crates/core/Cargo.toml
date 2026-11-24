@@ -22,6 +22,7 @@ directories.workspace = true
 url.workspace = true
 futures.workspace = true
 reqwest.workspace = true
+oo7 = { version = "0.7", default-features = false, features = ["tokio", "native_crypto"] }
 
 [dev-dependencies]
 tempfile.workspace = true

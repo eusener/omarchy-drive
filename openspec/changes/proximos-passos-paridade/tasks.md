@@ -52,11 +52,11 @@
 
 ## 7. Tokens no keyring
 
-- [ ] 7.1 Criar a trait `TokenStore` com `FileStore` (comportamento atual) e trocar o `TokenManager` para usá-la; verificar que todos os testes existentes passam sem mudança
-- [ ] 7.2 Implementar `KeyringStore` com `oo7` (atributos `application`/`account`); verificar gravando, lendo e apagando um item de teste e conferindo com `secret-tool search application omarchy-drive`
-- [ ] 7.3 Implementar a seleção na partida (desbloqueado, bloqueado sem chamar `unlock()`, ausente com aviso único) e a migração idempotente que só apaga o arquivo depois de reler o item; verificar migrando `pessoal.json`, conferindo que o arquivo sumiu e que a sincronização continua
-- [ ] 7.4 Fazer a renovação gravar no mesmo store e o `remove` apagar item e arquivo; verificar forçando uma renovação (`expires_at` no passado) e removendo uma conta de teste
-- [ ] 7.5 Atualizar o README (onde ficam os tokens, fallback, keyring bloqueado) e mudar a linha do roadmap para ✅; verificar a seção relida contra o comportamento
+- [x] 7.1 Criar a trait `TokenStore` com `FileStore` (comportamento atual) e trocar o `TokenManager` para usá-la; verificar que todos os testes existentes passam sem mudança
+- [x] 7.2 Implementar `KeyringStore` com `oo7` (atributos `application`/`account`); verificar gravando, lendo e apagando um item de teste e conferindo com `secret-tool search application omarchy-drive`
+- [x] 7.3 Implementar a seleção na partida (desbloqueado, bloqueado sem chamar `unlock()`, ausente com aviso único) e a migração idempotente que só apaga o arquivo depois de reler o item; verificar migrando `pessoal.json`, conferindo que o arquivo sumiu e que a sincronização continua
+- [x] 7.4 Fazer a renovação gravar no mesmo store e o `remove` apagar item e arquivo; verificar forçando uma renovação (`expires_at` no passado) e removendo uma conta de teste
+- [x] 7.5 Atualizar o README (onde ficam os tokens, fallback, keyring bloqueado) e mudar a linha do roadmap para ✅; verificar a seção relida contra o comportamento
 
 ## 8. OneDrive validado
 

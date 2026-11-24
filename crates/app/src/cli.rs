@@ -9,6 +9,8 @@ use omarchy_drive_core::state::State;
 use omarchy_drive_core::status::{PairState, StatusDoc, StatusHub};
 
 use crate::ipc::{self, Request};
+use omarchy_drive_core::token_store;
+
 use crate::auth_flow::{self, Target};
 use crate::{daemon, providers};
 
@@ -253,7 +255,10 @@ pub async fn run(cli: Cli) -> Result<()> {
             for p in &pairs {
                 remove_pair_db(&dirs, p);
             }
-            let _ = std::fs::remove_file(dirs.token_file(&name));
+            let store = token_store::detect(&dirs.tokens_dir()).await;
+            if let Err(e) = store.delete(&name).await {
+                eprintln!("aviso: não foi possível apagar os tokens de {name} ({}): {e:#}", store.kind());
+            }
             notify_reload(&dirs).await;
             if pairs.is_empty() {
                 println!("Conta {name} removida.");
@@ -277,7 +282,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             std::fs::create_dir_all(&local)?;
             let remote = remote.trim_matches('/').to_string();
             // Valida (e cria, se preciso) a pasta remota agora, para errar cedo.
-            let provider = providers::build(&cfg, &dirs, &acc)?;
+            let provider = providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, &acc)?;
             let root = provider.resolve_folder(&remote).await?;
             println!("Pasta remota \"{}\" ok (id {}).", if remote.is_empty() { "/" } else { &remote }, root.id);
             cfg.pairs.push(SyncPair {
@@ -361,7 +366,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             let mut ran = 0;
             for p in cfg.pairs.iter().filter(|p| pair.as_deref().is_none_or(|x| x == p.name)) {
                 let acc = cfg.account(&p.account).with_context(|| format!("conta {} não existe", p.account))?;
-                let provider = providers::build(&cfg, &dirs, acc)?;
+                let provider = providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, acc)?;
                 let engine = PairEngine::new(
                     p.clone(),
                     provider,
@@ -449,6 +454,9 @@ fn human(bytes: u64) -> String {
 }
 
 fn print_status(d: &StatusDoc) {
+    for n in &d.notices {
+        println!("aviso: {n}");
+    }
     if d.pairs.is_empty() {
         println!("Daemon rodando, nenhum par configurado.");
     }

@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use omarchy_drive_core::Provider;
-use omarchy_drive_core::config::{Account, Config, Dirs, ProviderKind};
+use omarchy_drive_core::config::{Account, Config, ProviderKind};
 use omarchy_drive_core::oauth::{OAuthEndpoints, TokenManager};
+use omarchy_drive_core::token_store::TokenStore;
 
 /// Client OAuth (id e, no Google, o secret de app instalado, que não é confidencial).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,18 +93,18 @@ pub fn endpoints(kind: ProviderKind, client: &Client) -> OAuthEndpoints {
     }
 }
 
-pub fn build(cfg: &Config, dirs: &Dirs, account: &Account) -> Result<Arc<dyn Provider>> {
+pub fn build(cfg: &Config, store: &Arc<dyn TokenStore>, account: &Account) -> Result<Arc<dyn Provider>> {
     let ep = endpoints(account.provider, &client_for_account(cfg, account)?);
-    let tokens = TokenManager::load(ep, dirs.token_file(&account.name))?;
+    let tokens = TokenManager::new(ep, store.clone(), account.name.clone());
     Ok(match account.provider {
         ProviderKind::Gdrive => Arc::new(omarchy_drive_gdrive::GDrive::new(tokens)),
         ProviderKind::Onedrive => Arc::new(omarchy_drive_onedrive::OneDrive::new(tokens)),
     })
 }
 
-/// E-mail da conta dona dos tokens gravados em `path`.
-pub async fn email_from_tokens(kind: ProviderKind, ep: OAuthEndpoints, path: std::path::PathBuf) -> Result<String> {
-    let tokens = TokenManager::load(ep, path)?;
+/// E-mail da conta dona dos tokens (ainda só em memória, durante o login).
+pub async fn email_from_tokens(kind: ProviderKind, ep: OAuthEndpoints, store: Arc<dyn TokenStore>) -> Result<String> {
+    let tokens = TokenManager::new(ep, store, "pendente");
     match kind {
         ProviderKind::Gdrive => omarchy_drive_gdrive::GDrive::new(tokens).account_email().await,
         ProviderKind::Onedrive => omarchy_drive_onedrive::OneDrive::new(tokens).account_email().await,

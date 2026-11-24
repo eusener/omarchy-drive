@@ -7,12 +7,14 @@
 
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use omarchy_drive_core::config::{Account, Config, Dirs, ProviderKind};
 use omarchy_drive_core::oauth;
+use omarchy_drive_core::token_store::{self, MemoryStore};
 use serde::{Deserialize, Serialize};
 
 use crate::ipc::{self, Request};
@@ -148,13 +150,9 @@ async fn authorize_and_store(
         Err(_) => bail!("tempo esgotado esperando a autorização no navegador"),
     };
 
-    // Os tokens ficam num arquivo provisório até sabermos de qual conta são.
-    std::fs::create_dir_all(dirs.state.join("tokens"))?;
-    let staged = dirs.state.join("tokens").join(format!(".pendente-{}.json", std::process::id()));
-    oauth::save_tokens(&staged, &tokens)?;
-    let result = finish(dirs, &mut cfg, kind, target, &client, &staged, progress).await;
-    let _ = std::fs::remove_file(&staged);
-    result
+    // Os tokens ficam só em memória até sabermos de qual conta são.
+    let staged = Arc::new(MemoryStore::new(tokens));
+    finish(dirs, &mut cfg, kind, target, &client, staged, progress).await
 }
 
 async fn finish(
@@ -163,10 +161,10 @@ async fn finish(
     kind: ProviderKind,
     target: Target,
     client: &providers::Client,
-    staged: &Path,
+    staged: Arc<MemoryStore>,
     progress: &mut AuthProgress,
 ) -> Result<String> {
-    let email = providers::email_from_tokens(kind, providers::endpoints(kind, client), staged.to_path_buf())
+    let email = providers::email_from_tokens(kind, providers::endpoints(kind, client), staged.clone())
         .await
         .context("não foi possível confirmar a conta autorizada")?;
 
@@ -189,7 +187,9 @@ async fn finish(
     };
     progress.account = Some(name.clone());
 
-    std::fs::rename(staged, dirs.token_file(&name))?;
+    // A consulta do e-mail pode ter renovado o access token: grava o atual.
+    let store = token_store::detect(&dirs.tokens_dir()).await;
+    store.save(&name, &staged.get().await).await.with_context(|| format!("gravando os tokens ({})", store.kind()))?;
     // Connect que virou reauth troca o client da conta pelo usado agora.
     match cfg.accounts.iter_mut().find(|a| a.name == name) {
         Some(a) => {

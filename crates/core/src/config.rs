@@ -132,8 +132,9 @@ impl Dirs {
     pub fn config_file(&self) -> PathBuf {
         self.config.join("config.toml")
     }
-    pub fn token_file(&self, account: &str) -> PathBuf {
-        self.state.join("tokens").join(format!("{account}.json"))
+    /// Pasta dos tokens em arquivo (fallback sem keyring e origem da migração).
+    pub fn tokens_dir(&self) -> PathBuf {
+        self.state.join("tokens")
     }
     pub fn pair_db(&self, pair: &str) -> PathBuf {
         self.state.join("pairs").join(format!("{pair}.sqlite"))

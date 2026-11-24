@@ -13,6 +13,7 @@ pub mod provider;
 pub mod scan;
 pub mod shortcut;
 pub mod state;
+pub mod token_store;
 pub mod status;
 pub mod trash;
 pub mod tree;
