@@ -77,7 +77,11 @@ fn write_progress(dirs: &Dirs, p: &AuthProgress) {
 
 /// Lock exclusivo, sem esperar. Mantido enquanto o `File` viver.
 fn try_lock(path: &Path) -> Result<Option<std::fs::File>> {
-    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
     // SAFETY: descritor válido enquanto `f` existir.
     let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     Ok(if r == 0 { Some(f) } else { None })
@@ -93,7 +97,9 @@ pub async fn run(kind: ProviderKind, target: Target) -> Result<String> {
     let dirs = Dirs::get()?;
     std::fs::create_dir_all(&dirs.runtime)?;
     let Some(_lock) = try_lock(&lock_file(&dirs))? else {
-        bail!("já existe uma autorização em andamento (cancele com `omarchy-drive account cancel`)");
+        bail!(
+            "já existe uma autorização em andamento (cancele com `omarchy-drive account cancel`)"
+        );
     };
 
     let mut progress = AuthProgress {
@@ -135,10 +141,18 @@ async fn authorize_and_store(
     // Reauth mantém o client que autorizou a conta; conta nova usa o
     // configurado em `[oauth]` ou, sem ele, o padrão embutido.
     let client = match &target {
-        Target::Add(name) if cfg.account(name).is_some() => bail!("já existe uma conta chamada {name}"),
+        Target::Add(name) if cfg.account(name).is_some() => {
+            bail!("já existe uma conta chamada {name}")
+        }
         Target::Reauth { name, .. } => {
-            let a = cfg.account(name).with_context(|| format!("conta {name} não encontrada"))?;
-            anyhow::ensure!(a.provider == kind, "a conta {name} é do provedor {}", a.provider);
+            let a = cfg
+                .account(name)
+                .with_context(|| format!("conta {name} não encontrada"))?;
+            anyhow::ensure!(
+                a.provider == kind,
+                "a conta {name} é do provedor {}",
+                a.provider
+            );
             providers::client_for_account(&cfg, a)?
         }
         _ => providers::client_for_new(&cfg, kind)?,
@@ -164,9 +178,10 @@ async fn finish(
     staged: Arc<MemoryStore>,
     progress: &mut AuthProgress,
 ) -> Result<String> {
-    let email = providers::email_from_tokens(kind, providers::endpoints(kind, client), staged.clone())
-        .await
-        .context("não foi possível confirmar a conta autorizada")?;
+    let email =
+        providers::email_from_tokens(kind, providers::endpoints(kind, client), staged.clone())
+            .await
+            .context("não foi possível confirmar a conta autorizada")?;
 
     let (name, reauth) = match target {
         Target::Connect => match cfg.account_by_email(kind, &email) {
@@ -175,7 +190,10 @@ async fn finish(
         },
         Target::Add(name) => (name, false),
         Target::Reauth { name, force } => {
-            let label = cfg.account(&name).map(|a| a.label.clone()).unwrap_or_default();
+            let label = cfg
+                .account(&name)
+                .map(|a| a.label.clone())
+                .unwrap_or_default();
             if !label.is_empty() && !email.eq_ignore_ascii_case(&label) && !force {
                 bail!(
                     "você entrou como {email}, mas a conta {name} é {label}. Nada foi alterado \
@@ -189,7 +207,10 @@ async fn finish(
 
     // A consulta do e-mail pode ter renovado o access token: grava o atual.
     let store = token_store::detect(&dirs.tokens_dir()).await;
-    store.save(&name, &staged.get().await).await.with_context(|| format!("gravando os tokens ({})", store.kind()))?;
+    store
+        .save(&name, &staged.get().await)
+        .await
+        .with_context(|| format!("gravando os tokens ({})", store.kind()))?;
     // Connect que virou reauth troca o client da conta pelo usado agora.
     match cfg.accounts.iter_mut().find(|a| a.name == name) {
         Some(a) => {
@@ -217,7 +238,9 @@ async fn finish(
 /// Cancela o fluxo em andamento (se houver). Devolve `false` se não havia nenhum.
 pub fn cancel() -> Result<bool> {
     let dirs = Dirs::get()?;
-    let Some(mut p) = read_progress(&dirs) else { return Ok(false) };
+    let Some(mut p) = read_progress(&dirs) else {
+        return Ok(false);
+    };
     if p.state != FlowState::Authorizing || !pid_alive(p.pid) {
         return Ok(false);
     }

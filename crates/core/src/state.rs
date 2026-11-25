@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 "#;
 
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 impl State {
@@ -131,9 +133,9 @@ impl State {
     // ---- árvore remota ----
 
     pub fn load_remote(&self) -> Result<Vec<RemoteItem>> {
-        let mut st = self.conn.prepare(
-            "SELECT id,parent_id,name,is_dir,size,mtime_ms,rev,hash,native FROM remote",
-        )?;
+        let mut st = self
+            .conn
+            .prepare("SELECT id,parent_id,name,is_dir,size,mtime_ms,rev,hash,native FROM remote")?;
         let rows = st.query_map([], |r| {
             Ok(RemoteItem {
                 id: r.get(0)?,
@@ -195,18 +197,23 @@ impl State {
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| r.get(0))
+            .query_row("SELECT value FROM kv WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
             .optional()?)
     }
 
     pub fn set(&self, key: &str, value: &str) -> Result<()> {
-        self.conn
-            .execute("INSERT OR REPLACE INTO kv VALUES (?1, ?2)", params![key, value])?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO kv VALUES (?1, ?2)",
+            params![key, value],
+        )?;
         Ok(())
     }
 
     pub fn del(&self, key: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM kv WHERE key = ?1", params![key])?;
+        self.conn
+            .execute("DELETE FROM kv WHERE key = ?1", params![key])?;
         Ok(())
     }
 }

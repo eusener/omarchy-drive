@@ -88,11 +88,13 @@ impl StatusDoc {
         self.overall = [NeedsConfirm, AuthExpired, Error, Syncing, Offline]
             .into_iter()
             .find(|s| states.contains(s))
-            .unwrap_or(if !states.is_empty() && states.iter().all(|s| *s == Paused) {
-                Paused
-            } else {
-                Idle
-            });
+            .unwrap_or(
+                if !states.is_empty() && states.iter().all(|s| *s == Paused) {
+                    Paused
+                } else {
+                    Idle
+                },
+            );
     }
 }
 
@@ -103,8 +105,15 @@ pub struct StatusHub {
 
 impl StatusHub {
     pub fn new(path: Option<PathBuf>) -> Self {
-        let doc = StatusDoc { version: STATUS_VERSION, pid: std::process::id(), ..Default::default() };
-        Self { path, doc: Mutex::new(doc) }
+        let doc = StatusDoc {
+            version: STATUS_VERSION,
+            pid: std::process::id(),
+            ..Default::default()
+        };
+        Self {
+            path,
+            doc: Mutex::new(doc),
+        }
     }
 
     pub fn update(&self, pair: &str, f: impl FnOnce(&mut PairStatus)) {
@@ -136,7 +145,14 @@ impl StatusHub {
             let old = std::mem::take(&mut d.accounts);
             for (name, provider, label) in accounts {
                 let auth = old.get(&name).map(|a| a.auth).unwrap_or_default();
-                d.accounts.insert(name, AccountStatus { provider, label, auth });
+                d.accounts.insert(
+                    name,
+                    AccountStatus {
+                        provider,
+                        label,
+                        auth,
+                    },
+                );
             }
             d.updated_at = Some(Utc::now());
             d.clone()
@@ -207,8 +223,14 @@ mod tests {
             s.state = PairState::AuthExpired;
         });
         hub.update("outro", |s| s.state = PairState::Error);
-        assert_eq!(hub.set_account_auth("pessoal", AuthState::Expired), Some(AuthState::Ok));
-        assert_eq!(hub.set_account_auth("pessoal", AuthState::Expired), Some(AuthState::Expired));
+        assert_eq!(
+            hub.set_account_auth("pessoal", AuthState::Expired),
+            Some(AuthState::Ok)
+        );
+        assert_eq!(
+            hub.set_account_auth("pessoal", AuthState::Expired),
+            Some(AuthState::Expired)
+        );
         assert_eq!(hub.set_account_auth("naoexiste", AuthState::Expired), None);
 
         let v = serde_json::to_value(hub.snapshot()).unwrap();

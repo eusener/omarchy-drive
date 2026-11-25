@@ -15,7 +15,11 @@ use crate::auth_flow::{self, Target};
 use crate::{daemon, providers};
 
 #[derive(Parser)]
-#[command(name = "omarchy-drive", version, about = "Sincronização bidirecional de Google Drive e OneDrive para o Omarchy")]
+#[command(
+    name = "omarchy-drive",
+    version,
+    about = "Sincronização bidirecional de Google Drive e OneDrive para o Omarchy"
+)]
 pub struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -162,7 +166,9 @@ enum PairCmd {
     },
     List,
     /// Remove o par (os arquivos locais e remotos são mantidos).
-    Remove { name: String },
+    Remove {
+        name: String,
+    },
 }
 
 fn load() -> Result<(Dirs, Config)> {
@@ -201,18 +207,26 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Setup(s) => {
             let (dirs, mut cfg) = load()?;
             match s {
-                SetupCmd::Google { client_id, client_secret } => {
+                SetupCmd::Google {
+                    client_id,
+                    client_secret,
+                } => {
                     cfg.oauth.google_client_id = Some(client_id);
                     cfg.oauth.google_client_secret = Some(client_secret);
                 }
-                SetupCmd::Microsoft { client_id } => cfg.oauth.microsoft_client_id = Some(client_id),
+                SetupCmd::Microsoft { client_id } => {
+                    cfg.oauth.microsoft_client_id = Some(client_id)
+                }
             }
             cfg.save(&dirs.config_file())?;
             println!("Credenciais salvas em {}", dirs.config_file().display());
         }
 
         Cmd::Account(AccountCmd::Connect { provider }) => {
-            println!("{}", auth_flow::run(provider.into(), Target::Connect).await?);
+            println!(
+                "{}",
+                auth_flow::run(provider.into(), Target::Connect).await?
+            );
         }
         Cmd::Account(AccountCmd::Cancel) => {
             if auth_flow::cancel()? {
@@ -222,17 +236,28 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Account(AccountCmd::Add { name, provider }) => {
-            println!("{}", auth_flow::run(provider.into(), Target::Add(name)).await?);
+            println!(
+                "{}",
+                auth_flow::run(provider.into(), Target::Add(name)).await?
+            );
         }
         Cmd::Account(AccountCmd::Reauth { name, force }) => {
             let (_, cfg) = load()?;
-            let kind = cfg.account(&name).with_context(|| format!("conta {name} não encontrada"))?.provider;
-            println!("{}", auth_flow::run(kind, Target::Reauth { name, force }).await?);
+            let kind = cfg
+                .account(&name)
+                .with_context(|| format!("conta {name} não encontrada"))?
+                .provider;
+            println!(
+                "{}",
+                auth_flow::run(kind, Target::Reauth { name, force }).await?
+            );
         }
         Cmd::Account(AccountCmd::List) => {
             let (_, cfg) = load()?;
             if cfg.accounts.is_empty() {
-                println!("Nenhuma conta. Use `omarchy-drive account connect --provider gdrive|onedrive` ou o painel da barra.");
+                println!(
+                    "Nenhuma conta. Use `omarchy-drive account connect --provider gdrive|onedrive` ou o painel da barra."
+                );
             }
             for a in &cfg.accounts {
                 println!("{:<16} {:<9} {}", a.name, a.provider.to_string(), a.label);
@@ -241,8 +266,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Account(AccountCmd::Remove { name, with_pairs }) => {
             let (dirs, mut cfg) = load()?;
             anyhow::ensure!(cfg.account(&name).is_some(), "conta {name} não encontrada");
-            let pairs: Vec<String> =
-                cfg.pairs.iter().filter(|p| p.account == name).map(|p| p.name.clone()).collect();
+            let pairs: Vec<String> = cfg
+                .pairs
+                .iter()
+                .filter(|p| p.account == name)
+                .map(|p| p.name.clone())
+                .collect();
             if !pairs.is_empty() && !with_pairs {
                 bail!(
                     "a conta ainda é usada por: {}. Remova os pares antes ou use --with-pairs",
@@ -257,34 +286,63 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             let store = token_store::detect(&dirs.tokens_dir()).await;
             if let Err(e) = store.delete(&name).await {
-                eprintln!("aviso: não foi possível apagar os tokens de {name} ({}): {e:#}", store.kind());
+                eprintln!(
+                    "aviso: não foi possível apagar os tokens de {name} ({}): {e:#}",
+                    store.kind()
+                );
             }
             notify_reload(&dirs).await;
             if pairs.is_empty() {
                 println!("Conta {name} removida.");
             } else {
-                println!("Conta {name} removida com os pares {} (arquivos mantidos nos dois lados).", pairs.join(", "));
+                println!(
+                    "Conta {name} removida com os pares {} (arquivos mantidos nos dois lados).",
+                    pairs.join(", ")
+                );
             }
         }
 
-        Cmd::Pair(PairCmd::Add { name, account, local, remote, include, ignore, download_only, full_scan_only }) => {
+        Cmd::Pair(PairCmd::Add {
+            name,
+            account,
+            local,
+            remote,
+            include,
+            ignore,
+            download_only,
+            full_scan_only,
+        }) => {
             let (dirs, mut cfg) = load()?;
             if cfg.pair(&name).is_some() {
                 bail!("já existe um par chamado {name}");
             }
-            let acc = cfg.account(&account).with_context(|| format!("conta {account} não existe"))?.clone();
+            let acc = cfg
+                .account(&account)
+                .with_context(|| format!("conta {account} não existe"))?
+                .clone();
             let local = std::path::absolute(expand_tilde(&local))?;
-            if let Some(other) = cfg.pairs.iter().find(|p| {
-                p.local.starts_with(&local) || local.starts_with(&p.local)
-            }) {
-                bail!("a pasta se sobrepõe ao par {} ({})", other.name, other.local.display());
+            if let Some(other) = cfg
+                .pairs
+                .iter()
+                .find(|p| p.local.starts_with(&local) || local.starts_with(&p.local))
+            {
+                bail!(
+                    "a pasta se sobrepõe ao par {} ({})",
+                    other.name,
+                    other.local.display()
+                );
             }
             std::fs::create_dir_all(&local)?;
             let remote = remote.trim_matches('/').to_string();
             // Valida (e cria, se preciso) a pasta remota agora, para errar cedo.
-            let provider = providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, &acc)?;
+            let provider =
+                providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, &acc)?;
             let root = provider.resolve_folder(&remote).await?;
-            println!("Pasta remota \"{}\" ok (id {}).", if remote.is_empty() { "/" } else { &remote }, root.id);
+            println!(
+                "Pasta remota \"{}\" ok (id {}).",
+                if remote.is_empty() { "/" } else { &remote },
+                root.id
+            );
             cfg.pairs.push(SyncPair {
                 name: name.clone(),
                 account,
@@ -322,7 +380,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                     p.account,
                     p.local.display(),
                     p.remote,
-                    if flags.is_empty() { String::new() } else { format!("[{flags}]") }
+                    if flags.is_empty() {
+                        String::new()
+                    } else {
+                        format!("[{flags}]")
+                    }
                 );
             }
         }
@@ -347,12 +409,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             match (json, doc) {
                 (true, Some(d)) => println!("{}", serde_json::to_string_pretty(&d)?),
                 (true, None) => println!("{{\"running\": false}}"),
-                (false, None) => println!("Daemon parado. Inicie com `systemctl --user enable --now omarchy-drive`."),
+                (false, None) => println!(
+                    "Daemon parado. Inicie com `systemctl --user enable --now omarchy-drive`."
+                ),
                 (false, Some(d)) => print_status(&d),
             }
         }
 
-        Cmd::Sync { pair, confirm_deletes } => {
+        Cmd::Sync {
+            pair,
+            confirm_deletes,
+        } => {
             let (dirs, cfg) = load()?;
             if dirs.socket().exists() && ipc::call(&dirs.socket(), &Request::Reload).await.is_ok() {
                 if confirm_deletes {
@@ -364,9 +431,16 @@ pub async fn run(cli: Cli) -> Result<()> {
             // Sem daemon: um ciclo aqui mesmo.
             let status = Arc::new(StatusHub::new(None));
             let mut ran = 0;
-            for p in cfg.pairs.iter().filter(|p| pair.as_deref().is_none_or(|x| x == p.name)) {
-                let acc = cfg.account(&p.account).with_context(|| format!("conta {} não existe", p.account))?;
-                let provider = providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, acc)?;
+            for p in cfg
+                .pairs
+                .iter()
+                .filter(|p| pair.as_deref().is_none_or(|x| x == p.name))
+            {
+                let acc = cfg
+                    .account(&p.account)
+                    .with_context(|| format!("conta {} não existe", p.account))?;
+                let provider =
+                    providers::build(&cfg, &token_store::detect(&dirs.tokens_dir()).await, acc)?;
                 let engine = PairEngine::new(
                     p.clone(),
                     provider,
@@ -382,7 +456,10 @@ pub async fn run(cli: Cli) -> Result<()> {
                         r.executed,
                         r.failed,
                         if r.held_deletes > 0 {
-                            format!(", {} exclusões retidas (use --confirm-deletes)", r.held_deletes)
+                            format!(
+                                ", {} exclusões retidas (use --confirm-deletes)",
+                                r.held_deletes
+                            )
                         } else {
                             String::new()
                         }
@@ -425,17 +502,33 @@ pub async fn run(cli: Cli) -> Result<()> {
         Cmd::Open { pair } => {
             let (_, cfg) = load()?;
             let p = match pair {
-                Some(n) => cfg.pair(&n).with_context(|| format!("par {n} não encontrado"))?,
+                Some(n) => cfg
+                    .pair(&n)
+                    .with_context(|| format!("par {n} não encontrado"))?,
                 None => cfg.pairs.first().context("nenhum par configurado")?,
             };
-            std::process::Command::new("xdg-open").arg(&p.local).spawn()?;
+            std::process::Command::new("xdg-open")
+                .arg(&p.local)
+                .spawn()?;
         }
         Cmd::OpenUrl { file } => {
-            let bytes = std::fs::read(&file).with_context(|| format!("lendo {}", file.display()))?;
-            anyhow::ensure!(bytes.len() <= 64 * 1024, "{} não é um atalho do omarchy-drive", file.display());
-            let url = omarchy_drive_core::shortcut::url_from(&bytes)
-                .with_context(|| format!("{} não é um atalho válido de documento do Google", file.display()))?;
-            std::process::Command::new("xdg-open").arg(&url).spawn().context("abrindo o navegador")?;
+            let bytes =
+                std::fs::read(&file).with_context(|| format!("lendo {}", file.display()))?;
+            anyhow::ensure!(
+                bytes.len() <= 64 * 1024,
+                "{} não é um atalho do omarchy-drive",
+                file.display()
+            );
+            let url = omarchy_drive_core::shortcut::url_from(&bytes).with_context(|| {
+                format!(
+                    "{} não é um atalho válido de documento do Google",
+                    file.display()
+                )
+            })?;
+            std::process::Command::new("xdg-open")
+                .arg(&url)
+                .spawn()
+                .context("abrindo o navegador")?;
         }
         Cmd::Daemon => daemon::run(Dirs::get()?).await?,
     }
@@ -473,19 +566,32 @@ fn print_status(d: &StatusDoc) {
         println!("● {name} [{}] — {state}", p.provider);
         println!("  {} ↔ /{}", p.local, p.remote);
         if let Some(t) = p.last_sync {
-            println!("  última sincronização: {}", t.with_timezone(&chrono::Local).format("%d/%m %H:%M:%S"));
+            println!(
+                "  última sincronização: {}",
+                t.with_timezone(&chrono::Local).format("%d/%m %H:%M:%S")
+            );
         }
         if p.queued > 0 {
-            println!("  na fila: {}  transferindo: {}", p.queued, p.active.join(", "));
+            println!(
+                "  na fila: {}  transferindo: {}",
+                p.queued,
+                p.active.join(", ")
+            );
         }
         if let (Some(u), Some(t)) = (p.quota_used, p.quota_total) {
             println!("  armazenamento: {} de {}", human(u), human(t));
         }
         if p.pending_deletes > 0 {
-            println!("  ⚠ {} exclusões retidas: `omarchy-drive confirm {name}`", p.pending_deletes);
+            println!(
+                "  ⚠ {} exclusões retidas: `omarchy-drive confirm {name}`",
+                p.pending_deletes
+            );
         }
         if !p.conflicts.is_empty() {
-            println!("  ⚠ {} conflito(s): `omarchy-drive conflicts`", p.conflicts.len());
+            println!(
+                "  ⚠ {} conflito(s): `omarchy-drive conflicts`",
+                p.conflicts.len()
+            );
         }
         if let Some(e) = &p.last_error {
             println!("  último erro: {e}");

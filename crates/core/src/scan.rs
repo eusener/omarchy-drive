@@ -57,7 +57,8 @@ fn walk(
     };
     for ent in rd.flatten() {
         let Some(name) = ent.file_name().to_str().map(str::to_owned) else {
-            out.errors.push(format!("nome não UTF-8 ignorado: {:?}", ent.path()));
+            out.errors
+                .push(format!("nome não UTF-8 ignorado: {:?}", ent.path()));
             continue;
         };
         let path = join(rel, &name);
@@ -92,7 +93,11 @@ fn visit(
     }
     let mtime_ns = md.mtime() * 1_000_000_000 + md.mtime_nsec();
     if ft.is_file()
-        && md.modified().ok().and_then(|m| now.duration_since(m).ok()).is_some_and(|d| d < SETTLE)
+        && md
+            .modified()
+            .ok()
+            .and_then(|m| now.duration_since(m).ok())
+            .is_some_and(|d| d < SETTLE)
     {
         out.skipped.push(path);
         return;
@@ -127,7 +132,6 @@ fn visit(
     }
 }
 
-
 /// Varredura parcial: parte do último resultado conhecido (`prev`) e relê do
 /// disco só os caminhos em `dirty` (com as subárvores das pastas). Um caminho
 /// só sai do resultado se o disco confirmar que ele não existe: o ancestral
@@ -140,7 +144,10 @@ pub fn scan_paths(
     prev: &HashMap<RelPath, LocalEntry>,
     dirty: &HashSet<RelPath>,
 ) -> ScanResult {
-    let mut out = ScanResult { entries: prev.clone(), ..Default::default() };
+    let mut out = ScanResult {
+        entries: prev.clone(),
+        ..Default::default()
+    };
     let now = SystemTime::now();
 
     // Um caminho sob outro caminho sujo já é coberto pela subárvore dele.
@@ -233,7 +240,12 @@ mod tests {
         std::fs::write(&p, data).unwrap();
         let n = TICK.fetch_add(1, Ordering::SeqCst);
         let t = SystemTime::now() - Duration::from_secs(100_000) + Duration::from_secs(n);
-        std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
     }
 
     fn ign() -> Ignore {
@@ -273,7 +285,12 @@ mod tests {
         paths.iter().map(|p| p.to_string()).collect()
     }
 
-    fn assert_same(root: &Path, base: &HashMap<RelPath, BaseEntry>, prev: &ScanResult, d: &HashSet<RelPath>) {
+    fn assert_same(
+        root: &Path,
+        base: &HashMap<RelPath, BaseEntry>,
+        prev: &ScanResult,
+        d: &HashSet<RelPath>,
+    ) {
         let full = scan(root, &ign(), base, HashKind::Md5);
         let part = scan_paths(root, &ign(), base, HashKind::Md5, &prev.entries, d);
         let mut a: Vec<_> = full.entries.values().map(|e| format!("{e:?}")).collect();
@@ -312,7 +329,14 @@ mod tests {
         // Evento de remoção chegou, mas o arquivo já foi recriado.
         put(root, ".doc.md.swp", b"v2");
         std::fs::rename(root.join(".doc.md.swp"), root.join("doc.md")).unwrap();
-        let part = scan_paths(root, &ign(), &base, HashKind::Md5, &prev.entries, &dirty(&["doc.md"]));
+        let part = scan_paths(
+            root,
+            &ign(),
+            &base,
+            HashKind::Md5,
+            &prev.entries,
+            &dirty(&["doc.md"]),
+        );
         assert!(part.entries.contains_key("doc.md"));
         assert_same(root, &base, &prev, &dirty(&["doc.md", ".doc.md.swp"]));
     }
@@ -328,7 +352,14 @@ mod tests {
         put(&fora, "Proj/src/main.rs", b"fn main(){}");
         put(&fora, "Proj/README", b"r");
         std::fs::rename(fora.join("Proj"), root.join("Proj")).unwrap();
-        let part = scan_paths(&root, &ign(), &base, HashKind::Md5, &prev.entries, &dirty(&["Proj"]));
+        let part = scan_paths(
+            &root,
+            &ign(),
+            &base,
+            HashKind::Md5,
+            &prev.entries,
+            &dirty(&["Proj"]),
+        );
         assert!(part.entries.contains_key("Proj/src/main.rs"));
         assert!(part.entries.contains_key("Proj/README"));
         assert_same(&root, &base, &prev, &dirty(&["Proj"]));
@@ -344,8 +375,19 @@ mod tests {
         let (prev, base) = synced(root);
         std::fs::remove_dir_all(root.join("A")).unwrap();
         // Só o evento do arquivo mais fundo chegou.
-        let part = scan_paths(root, &ign(), &base, HashKind::Md5, &prev.entries, &dirty(&["A/B/c.txt"]));
-        assert!(part.entries.keys().all(|k| !k.starts_with('A')), "{:?}", part.entries.keys());
+        let part = scan_paths(
+            root,
+            &ign(),
+            &base,
+            HashKind::Md5,
+            &prev.entries,
+            &dirty(&["A/B/c.txt"]),
+        );
+        assert!(
+            part.entries.keys().all(|k| !k.starts_with('A')),
+            "{:?}",
+            part.entries.keys()
+        );
         assert!(part.entries.contains_key("keep.txt"));
     }
 
@@ -358,13 +400,23 @@ mod tests {
         let (prev, base) = synced(root);
         std::fs::remove_file(root.join("S/a.txt")).unwrap();
         std::fs::set_permissions(root.join("S"), std::fs::Permissions::from_mode(0o000)).unwrap();
-        let part = scan_paths(root, &ign(), &base, HashKind::Md5, &prev.entries, &dirty(&["S/a.txt"]));
+        let part = scan_paths(
+            root,
+            &ign(),
+            &base,
+            HashKind::Md5,
+            &prev.entries,
+            &dirty(&["S/a.txt"]),
+        );
         std::fs::set_permissions(root.join("S"), std::fs::Permissions::from_mode(0o755)).unwrap();
         // Root lê pastas sem permissão; nesse caso o teste não se aplica.
         if unsafe { libc_geteuid() } != 0 {
             let covered = part.skipped.iter().any(|s| s == "S" || s == "S/a.txt");
             assert!(covered, "{:?}", part.skipped);
-            assert!(part.entries.contains_key("S/a.txt"), "ausência não confirmada não pode virar exclusão");
+            assert!(
+                part.entries.contains_key("S/a.txt"),
+                "ausência não confirmada não pode virar exclusão"
+            );
         }
     }
 
@@ -377,7 +429,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self, n: usize) -> usize {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((self.0 >> 33) as usize) % n
         }
     }
@@ -418,7 +473,8 @@ mod tests {
                         }
                         3 => {
                             let to = format!("{}.txt", names[rng.next(names.len())]);
-                            if root.join(&f).is_file() && root.join(&to).parent().unwrap().is_dir() {
+                            if root.join(&f).is_file() && root.join(&to).parent().unwrap().is_dir()
+                            {
                                 std::fs::rename(root.join(&f), root.join(&to)).unwrap();
                                 d.insert(f);
                                 d.insert(to);
@@ -471,7 +527,12 @@ mod bench {
             for f in 0..100 {
                 let p = sub.join(format!("arquivo{f:03}.txt"));
                 std::fs::write(&p, format!("{d}-{f}")).unwrap();
-                std::fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+                std::fs::File::options()
+                    .write(true)
+                    .open(&p)
+                    .unwrap()
+                    .set_modified(old)
+                    .unwrap();
             }
         }
         let ign = Ignore::new(&[], &[]).unwrap();
@@ -481,16 +542,19 @@ mod bench {
             .entries
             .values()
             .map(|e| {
-                (e.path.clone(), BaseEntry {
-                    path: e.path.clone(),
-                    is_dir: e.is_dir,
-                    remote_id: String::new(),
-                    remote_rev: String::new(),
-                    hash: e.hash.clone(),
-                    size: e.size,
-                    local_mtime_ns: e.mtime_ns,
-                    inode: e.inode,
-                })
+                (
+                    e.path.clone(),
+                    BaseEntry {
+                        path: e.path.clone(),
+                        is_dir: e.is_dir,
+                        remote_id: String::new(),
+                        remote_rev: String::new(),
+                        hash: e.hash.clone(),
+                        size: e.size,
+                        local_mtime_ns: e.mtime_ns,
+                        inode: e.inode,
+                    },
+                )
             })
             .collect();
         let n = first.entries.len();
@@ -507,7 +571,14 @@ mod bench {
         let part_t = t.elapsed();
 
         let t = Instant::now();
-        let idle = scan_paths(root, &ign, &base, HashKind::Md5, &full.entries, &HashSet::new());
+        let idle = scan_paths(
+            root,
+            &ign,
+            &base,
+            HashKind::Md5,
+            &full.entries,
+            &HashSet::new(),
+        );
         let idle_t = t.elapsed();
 
         println!("entradas: {n}");

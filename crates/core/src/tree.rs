@@ -14,7 +14,10 @@ pub struct RemoteTree {
 
 impl RemoteTree {
     pub fn new(root_id: String, items: Vec<RemoteItem>) -> Self {
-        Self { root_id, items: items.into_iter().map(|i| (i.id.clone(), i)).collect() }
+        Self {
+            root_id,
+            items: items.into_iter().map(|i| (i.id.clone(), i)).collect(),
+        }
     }
 
     /// Caminho relativo do item, ou `None` se não estiver sob a raiz.
@@ -47,7 +50,9 @@ impl RemoteTree {
         let mut dups = Vec::new();
         let mut stack: Vec<(String, RelPath)> = vec![(self.root_id.clone(), String::new())];
         while let Some((id, rel)) = stack.pop() {
-            let Some(kids) = children.get(id.as_str()) else { continue };
+            let Some(kids) = children.get(id.as_str()) else {
+                continue;
+            };
             let mut seen: HashMap<&str, usize> = HashMap::new();
             for k in kids {
                 *seen.entry(k.name.as_str()).or_default() += 1;
@@ -74,7 +79,13 @@ impl RemoteTree {
                 if k.is_dir {
                     stack.push((k.id.clone(), path.clone()));
                 }
-                out.insert(path.clone(), RemoteEntry { path, item: (*k).clone() });
+                out.insert(
+                    path.clone(),
+                    RemoteEntry {
+                        path,
+                        item: (*k).clone(),
+                    },
+                );
             }
         }
         (out, dups)

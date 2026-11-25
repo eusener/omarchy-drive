@@ -81,10 +81,12 @@ impl QuickXor {
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 enum Hasher {
@@ -145,7 +147,10 @@ mod tests {
 
     #[test]
     fn quickxor_empty() {
-        assert_eq!(QuickXor::new().finalize_base64(), "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        assert_eq!(
+            QuickXor::new().finalize_base64(),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        );
     }
 
     #[test]
@@ -199,12 +204,19 @@ mod tests {
                     seed as u8
                 })
                 .collect();
-            assert_eq!(hash_bytes(HashKind::QuickXor, &data), quickxor_by_definition(&data), "len {len}");
+            assert_eq!(
+                hash_bytes(HashKind::QuickXor, &data),
+                quickxor_by_definition(&data),
+                "len {len}"
+            );
         }
     }
 
     #[test]
     fn md5_known() {
-        assert_eq!(hash_bytes(HashKind::Md5, b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(
+            hash_bytes(HashKind::Md5, b"abc"),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
     }
 }

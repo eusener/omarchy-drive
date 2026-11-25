@@ -39,14 +39,17 @@ pub struct KeyringLocked;
 
 impl std::fmt::Display for KeyringLocked {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("keyring bloqueado: desbloqueie o chaveiro da sessão para a sincronização continuar")
+        f.write_str(
+            "keyring bloqueado: desbloqueie o chaveiro da sessão para a sincronização continuar",
+        )
     }
 }
 
 impl std::error::Error for KeyringLocked {}
 
 pub fn is_keyring_locked(e: &anyhow::Error) -> bool {
-    e.chain().any(|c| c.downcast_ref::<KeyringLocked>().is_some())
+    e.chain()
+        .any(|c| c.downcast_ref::<KeyringLocked>().is_some())
 }
 
 fn not_authorized(account: &str) -> anyhow::Error {
@@ -72,7 +75,9 @@ impl FileStore {
 
     fn read(&self, account: &str) -> Result<Option<TokenSet>> {
         match std::fs::read(self.path(account)) {
-            Ok(b) => Ok(Some(serde_json::from_slice(&b).context("arquivo de token inválido")?)),
+            Ok(b) => Ok(Some(
+                serde_json::from_slice(&b).context("arquivo de token inválido")?,
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -124,7 +129,11 @@ pub struct KeyringStore {
 
 impl KeyringStore {
     async fn collection(&self) -> Result<oo7::dbus::Collection> {
-        let c = self.service.default_collection().await.context("abrindo o chaveiro padrão")?;
+        let c = self
+            .service
+            .default_collection()
+            .await
+            .context("abrindo o chaveiro padrão")?;
         if c.is_locked().await.unwrap_or(true) {
             return Err(KeyringLocked.into());
         }
@@ -133,18 +142,31 @@ impl KeyringStore {
 
     async fn find(&self, c: &oo7::dbus::Collection, account: &str) -> Result<Option<TokenSet>> {
         let attrs = [("application", APP_ATTR), ("account", account)];
-        let items = c.search_items(&attrs).await.context("buscando no chaveiro")?;
-        let Some(item) = items.first() else { return Ok(None) };
+        let items = c
+            .search_items(&attrs)
+            .await
+            .context("buscando no chaveiro")?;
+        let Some(item) = items.first() else {
+            return Ok(None);
+        };
         let secret = item.secret().await.context("lendo o segredo")?;
-        Ok(Some(serde_json::from_slice(secret.as_bytes()).context("segredo do chaveiro inválido")?))
+        Ok(Some(
+            serde_json::from_slice(secret.as_bytes()).context("segredo do chaveiro inválido")?,
+        ))
     }
 
     async fn put(&self, c: &oo7::dbus::Collection, account: &str, t: &TokenSet) -> Result<()> {
         let attrs = [("application", APP_ATTR), ("account", account)];
         let json = serde_json::to_vec(t)?;
-        c.create_item(&format!("omarchy-drive: {account}"), &attrs, json, true, None)
-            .await
-            .context("gravando no chaveiro")?;
+        c.create_item(
+            &format!("omarchy-drive: {account}"),
+            &attrs,
+            json,
+            true,
+            None,
+        )
+        .await
+        .context("gravando no chaveiro")?;
         Ok(())
     }
 
@@ -174,9 +196,14 @@ impl TokenStore for KeyringStore {
             }
             return Ok(t);
         }
-        let Some(t) = self.legacy.read(account)? else { return Err(not_authorized(account)) };
+        let Some(t) = self.legacy.read(account)? else {
+            return Err(not_authorized(account));
+        };
         if let Err(e) = self.migrate(&c, account, &t).await {
-            warn!(account, "migração para o chaveiro falhou, usando o arquivo: {e:#}");
+            warn!(
+                account,
+                "migração para o chaveiro falhou, usando o arquivo: {e:#}"
+            );
         }
         Ok(t)
     }
@@ -257,7 +284,11 @@ mod tests {
     use super::*;
 
     fn tokens(rt: &str) -> TokenSet {
-        TokenSet { access_token: "a".into(), refresh_token: rt.into(), expires_at: 1 }
+        TokenSet {
+            access_token: "a".into(),
+            refresh_token: rt.into(),
+            expires_at: 1,
+        }
     }
 
     #[tokio::test]
@@ -285,9 +316,14 @@ mod tests {
         assert_eq!(store.kind(), "keyring", "sem Secret Service nesta sessão");
         let acc = format!("teste-{}", std::process::id());
         // Migração: só existe o arquivo.
-        FileStore::new(dir.path().to_path_buf()).write(&acc, &tokens("r-arquivo")).unwrap();
+        FileStore::new(dir.path().to_path_buf())
+            .write(&acc, &tokens("r-arquivo"))
+            .unwrap();
         assert_eq!(store.load(&acc).await.unwrap().refresh_token, "r-arquivo");
-        assert!(!dir.path().join(format!("{acc}.json")).exists(), "arquivo deveria sumir após a migração");
+        assert!(
+            !dir.path().join(format!("{acc}.json")).exists(),
+            "arquivo deveria sumir após a migração"
+        );
         // Gravação e releitura.
         store.save(&acc, &tokens("r-novo")).await.unwrap();
         assert_eq!(store.load(&acc).await.unwrap().refresh_token, "r-novo");

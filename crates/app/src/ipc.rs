@@ -33,6 +33,9 @@ pub async fn call(socket: &Path, req: &Request) -> Result<Response> {
     line.push('\n');
     w.write_all(line.as_bytes()).await?;
     let mut lines = BufReader::new(r).lines();
-    let resp = lines.next_line().await?.context("daemon fechou a conexão")?;
+    let resp = lines
+        .next_line()
+        .await?
+        .context("daemon fechou a conexão")?;
     Ok(serde_json::from_str(&resp)?)
 }

@@ -87,7 +87,14 @@ impl OneDrive {
         };
         let graph = graph.trim_end_matches('/').to_string();
         let base = format!("{graph}/me/drive");
-        Self { tokens, http: build(), raw: build(), root_id: OnceCell::new(), graph, base }
+        Self {
+            tokens,
+            http: build(),
+            raw: build(),
+            root_id: OnceCell::new(),
+            graph,
+            base,
+        }
     }
 
     /// E-mail da conta (`mail`, ou `userPrincipalName` se ausente).
@@ -99,7 +106,9 @@ impl OneDrive {
             mail: Option<String>,
             user_principal_name: Option<String>,
         }
-        let me: Me = self.get_json(&format!("{graph}/me?$select=mail,userPrincipalName")).await?;
+        let me: Me = self
+            .get_json(&format!("{graph}/me?$select=mail,userPrincipalName"))
+            .await?;
         me.mail
             .filter(|m| !m.is_empty())
             .or(me.user_principal_name)
@@ -122,7 +131,9 @@ impl OneDrive {
 
     async fn root_item(&self) -> Result<RemoteItem> {
         let base = &self.base;
-        let root = self.get_item(&format!("{base}/root?$select={SELECT}")).await?;
+        let root = self
+            .get_item(&format!("{base}/root?$select={SELECT}"))
+            .await?;
         let _ = self.root_id.set(root.id.clone());
         Ok(root)
     }
@@ -136,8 +147,11 @@ impl OneDrive {
 
     async fn child_by_name(&self, parent_id: &str, name: &str) -> Result<RemoteItem> {
         let base = &self.base;
-        self.get_item(&format!("{base}/items/{parent_id}:/{}:?$select={SELECT}", encode_segment(name)))
-            .await
+        self.get_item(&format!(
+            "{base}/items/{parent_id}:/{}:?$select={SELECT}",
+            encode_segment(name)
+        ))
+        .await
     }
 
     async fn list_children(&self, id: &str) -> Result<Vec<RemoteItem>> {
@@ -172,7 +186,8 @@ impl OneDrive {
 
     async fn patch_mtime(&self, id: &str, mtime_ms: i64) -> Result<RemoteItem> {
         let base = &self.base;
-        let body = json!({ "fileSystemInfo": { "lastModifiedDateTime": format_time_ms(mtime_ms) } });
+        let body =
+            json!({ "fileSystemInfo": { "lastModifiedDateTime": format_time_ms(mtime_ms) } });
         let url = format!("{base}/items/{id}");
         let r = http::send(&self.tokens, || self.http.patch(&url).json(&body)).await?;
         let it: DriveItem = r.json().await?;
@@ -219,7 +234,10 @@ impl OneDrive {
         let base = &self.base;
         let create = match existing_id {
             Some(id) => format!("{base}/items/{id}/createUploadSession"),
-            None => format!("{base}/items/{parent_id}:/{}:/createUploadSession", encode_segment(name)),
+            None => format!(
+                "{base}/items/{parent_id}:/{}:/createUploadSession",
+                encode_segment(name)
+            ),
         };
         let body = json!({
             "item": {
@@ -265,11 +283,16 @@ impl OneDrive {
             let len = CHUNK.min(total - offset);
             file.seek(SeekFrom::Start(offset)).await?;
             let mut buf = vec![0u8; len as usize];
-            file.read_exact(&mut buf).await.context("arquivo encolheu durante o envio")?;
+            file.read_exact(&mut buf)
+                .await
+                .context("arquivo encolheu durante o envio")?;
             let res = self
                 .raw
                 .put(upload_url)
-                .header(CONTENT_RANGE, format!("bytes {offset}-{}/{total}", offset + len - 1))
+                .header(
+                    CONTENT_RANGE,
+                    format!("bytes {offset}-{}/{total}", offset + len - 1),
+                )
                 .header(CONTENT_LENGTH, len)
                 .body(buf)
                 .send()
@@ -364,7 +387,10 @@ impl Provider for OneDrive {
         if enc.is_empty() {
             return self.root_item().await;
         }
-        let item = match self.get_item(&format!("{base}/root:/{enc}:?$select={SELECT}")).await {
+        let item = match self
+            .get_item(&format!("{base}/root:/{enc}:?$select={SELECT}"))
+            .await
+        {
             Ok(it) => it,
             Err(e) if http::status_of(&e) == Some(StatusCode::NOT_FOUND) => {
                 // Cria os segmentos que faltam, um a um.
@@ -384,7 +410,9 @@ impl Provider for OneDrive {
 
     async fn start_cursor(&self, _root_id: &str) -> Result<String> {
         let base = &self.base;
-        let page: Page = self.get_json(&format!("{base}/root/delta?token=latest&$select={SELECT}")).await?;
+        let page: Page = self
+            .get_json(&format!("{base}/root/delta?token=latest&$select={SELECT}"))
+            .await?;
         match page.next()? {
             PageNext::Done(c) => Ok(c),
             // Não deveria acontecer com token=latest; segue até o fim.
@@ -426,7 +454,10 @@ impl Provider for OneDrive {
                 Ok(p) => p,
                 Err(e) if is_resync(&e) => {
                     debug!(error = %e, "cursor de delta invalidado; relistando");
-                    return Ok(ChangeBatch { reset: true, ..Default::default() });
+                    return Ok(ChangeBatch {
+                        reset: true,
+                        ..Default::default()
+                    });
                 }
                 Err(e) => return Err(e),
             };
@@ -470,9 +501,11 @@ impl Provider for OneDrive {
     ) -> Result<RemoteItem> {
         let size = tokio::fs::metadata(src).await?.len();
         if size <= SIMPLE_UPLOAD_MAX {
-            self.upload_simple(parent_id, name, src, mtime_ms, existing_id).await
+            self.upload_simple(parent_id, name, src, mtime_ms, existing_id)
+                .await
         } else {
-            self.upload_session(parent_id, name, src, size, mtime_ms, existing_id).await
+            self.upload_session(parent_id, name, src, size, mtime_ms, existing_id)
+                .await
         }
     }
 
@@ -532,7 +565,10 @@ impl Provider for OneDrive {
         }
         let d: Drive = self.get_json(&format!("{base}?$select=quota")).await?;
         let q = d.quota.context("o drive não informou cota")?;
-        Ok(Quota { used: q.used.unwrap_or(0), total: q.total })
+        Ok(Quota {
+            used: q.used.unwrap_or(0),
+            total: q.total,
+        })
     }
 }
 
@@ -546,7 +582,10 @@ mod tests {
         assert_eq!(ep.client_id, "abc");
         assert!(ep.client_secret.is_none());
         assert_eq!(ep.redirect_host, "localhost");
-        assert_eq!(ep.scopes.join(" "), "Files.ReadWrite.All offline_access User.Read");
+        assert_eq!(
+            ep.scopes.join(" "),
+            "Files.ReadWrite.All offline_access User.Read"
+        );
         assert!(ep.token_url.contains("microsoftonline"));
         assert!(ep.extra_auth_params.is_empty());
     }

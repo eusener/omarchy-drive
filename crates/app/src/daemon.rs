@@ -10,10 +10,10 @@ use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher};
 use omarchy_drive_core::config::{Config, Dirs, Settings};
 use omarchy_drive_core::engine::{PairEngine, ScanScope};
-use omarchy_drive_core::state::State;
 use omarchy_drive_core::oauth::is_auth_expired;
-use omarchy_drive_core::token_store::{self, TokenStore, is_keyring_locked};
+use omarchy_drive_core::state::State;
 use omarchy_drive_core::status::{AuthState, PairState, StatusHub};
+use omarchy_drive_core::token_store::{self, TokenStore, is_keyring_locked};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
@@ -56,10 +56,14 @@ pub fn notify_desktop(settings: &Settings, title: &str, body: &str) {
 async fn notifications_support_actions() -> bool {
     let out = tokio::process::Command::new("gdbus")
         .args([
-            "call", "--session",
-            "--dest", "org.freedesktop.Notifications",
-            "--object-path", "/org/freedesktop/Notifications",
-            "--method", "org.freedesktop.Notifications.GetCapabilities",
+            "call",
+            "--session",
+            "--dest",
+            "org.freedesktop.Notifications",
+            "--object-path",
+            "/org/freedesktop/Notifications",
+            "--method",
+            "org.freedesktop.Notifications.GetCapabilities",
         ])
         .output()
         .await;
@@ -74,19 +78,39 @@ fn notify_auth_expired(settings: &Settings, account: String, label: String) {
         return;
     }
     tokio::spawn(async move {
-        let who = if label.is_empty() { account.clone() } else { label };
+        let who = if label.is_empty() {
+            account.clone()
+        } else {
+            label
+        };
         let title = "Login do Drive expirado";
         if !notifications_support_actions().await {
             let body = format!("{who}: abra o painel do Drive Sync na barra para reautorizar.");
             let _ = tokio::process::Command::new("notify-send")
-                .args(["-a", "omarchy-drive", "-i", "dialog-password", "-u", "critical", title, &body])
+                .args([
+                    "-a",
+                    "omarchy-drive",
+                    "-i",
+                    "dialog-password",
+                    "-u",
+                    "critical",
+                    title,
+                    &body,
+                ])
                 .status()
                 .await;
             return;
         }
         let body = format!("{who}: a sincronização está parada até você entrar de novo.");
         let out = tokio::process::Command::new("notify-send")
-            .args(["-a", "omarchy-drive", "-i", "dialog-password", "-u", "critical"])
+            .args([
+                "-a",
+                "omarchy-drive",
+                "-i",
+                "dialog-password",
+                "-u",
+                "critical",
+            ])
             .args(["--action=reauth=Reautorizar", title, &body])
             .output()
             .await;
@@ -106,29 +130,51 @@ fn notify_auth_expired(settings: &Settings, account: String, label: String) {
 
 fn looks_offline(e: &anyhow::Error) -> bool {
     let s = format!("{e:#}").to_lowercase();
-    ["error sending request", "dns error", "connection refused", "network is unreachable", "timed out"]
-        .iter()
-        .any(|k| s.contains(k))
+    [
+        "error sending request",
+        "dns error",
+        "connection refused",
+        "network is unreachable",
+        "timed out",
+    ]
+    .iter()
+    .any(|k| s.contains(k))
 }
 
 impl Supervisor {
     fn new(dirs: Dirs, status: Arc<StatusHub>, tokens: Arc<dyn TokenStore>) -> Result<Self> {
         let cfg = Config::load(&dirs.config_file())?;
-        Ok(Self { dirs, status, tokens, cfg, pairs: HashMap::new() })
+        Ok(Self {
+            dirs,
+            status,
+            tokens,
+            cfg,
+            pairs: HashMap::new(),
+        })
     }
 
     fn start_all(&mut self) {
         self.status.set_accounts(
-            self.cfg.accounts.iter().map(|a| (a.name.clone(), a.provider.to_string(), a.label.clone())),
+            self.cfg
+                .accounts
+                .iter()
+                .map(|a| (a.name.clone(), a.provider.to_string(), a.label.clone())),
         );
         for pair in self.cfg.pairs.clone() {
             let account = self.cfg.account(&pair.account).cloned();
             self.status.update(&pair.name, |s| {
                 s.account = pair.account.clone();
-                s.provider = account.as_ref().map(|a| a.provider.to_string()).unwrap_or_default();
+                s.provider = account
+                    .as_ref()
+                    .map(|a| a.provider.to_string())
+                    .unwrap_or_default();
                 s.local = pair.local.display().to_string();
                 s.remote = pair.remote.clone();
-                s.state = if pair.paused { PairState::Paused } else { PairState::Idle };
+                s.state = if pair.paused {
+                    PairState::Paused
+                } else {
+                    PairState::Idle
+                };
             });
             if pair.paused {
                 continue;
@@ -174,8 +220,13 @@ impl Supervisor {
             .with_context(|| format!("conta {} não existe", pair.account))?;
         let provider = providers::build(&self.cfg, &self.tokens, account)?;
         let state = State::open(&self.dirs.pair_db(&pair.name))?;
-        let engine =
-            PairEngine::new(pair.clone(), provider, state, self.cfg.settings.clone(), self.status.clone())?;
+        let engine = PairEngine::new(
+            pair.clone(),
+            provider,
+            state,
+            self.cfg.settings.clone(),
+            self.status.clone(),
+        )?;
         let (tx, rx) = mpsc::channel(16);
         let settings = self.cfg.settings.clone();
         let status = self.status.clone();
@@ -194,7 +245,10 @@ impl Supervisor {
         anyhow::ensure!(n > 0, "par não encontrado");
         self.cfg.save(&self.dirs.config_file())?;
         self.reload()?;
-        Ok(format!("{n} par(es) {}", if paused { "pausado(s)" } else { "retomado(s)" }))
+        Ok(format!(
+            "{n} par(es) {}",
+            if paused { "pausado(s)" } else { "retomado(s)" }
+        ))
     }
 
     async fn send(&self, pair: Option<&str>, cmd: impl Fn() -> PairCmd) -> Result<String> {
@@ -249,7 +303,11 @@ fn is_relevant(ev: &notify::Event) -> bool {
         EventKind::Modify(_) => true,
         EventKind::Access(_) | EventKind::Any | EventKind::Other => false,
     };
-    kind_ok && !ev.paths.iter().all(|p| p.to_string_lossy().contains(".omarchy-drive"))
+    kind_ok
+        && !ev
+            .paths
+            .iter()
+            .all(|p| p.to_string_lossy().contains(".omarchy-drive"))
 }
 
 async fn pair_loop(
@@ -329,9 +387,14 @@ async fn pair_loop(
         }
         let scope = {
             let mut p = pending.lock().unwrap();
-            let full = std::mem::take(&mut force_full) || std::mem::take(&mut p.rescan) || !inotify_ok;
+            let full =
+                std::mem::take(&mut force_full) || std::mem::take(&mut p.rescan) || !inotify_ok;
             let paths = std::mem::take(&mut p.paths);
-            if full { ScanScope::Full } else { ScanScope::Paths(paths) }
+            if full {
+                ScanScope::Full
+            } else {
+                ScanScope::Paths(paths)
+            }
         };
         let res = engine.sync_scoped(confirm, scope).await;
         last_mono = std::time::Instant::now();
@@ -373,7 +436,12 @@ async fn pair_loop(
                 // Só a primeira transição ok → expirado notifica (vários pares
                 // da mesma conta geram uma única notificação).
                 if status.set_account_auth(&account, AuthState::Expired) == Some(AuthState::Ok) {
-                    let label = status.snapshot().accounts.get(&account).map(|a| a.label.clone()).unwrap_or_default();
+                    let label = status
+                        .snapshot()
+                        .accounts
+                        .get(&account)
+                        .map(|a| a.label.clone())
+                        .unwrap_or_default();
                     notify_auth_expired(&settings, account, label);
                 }
                 match rx.recv().await {
@@ -393,12 +461,20 @@ async fn pair_loop(
                 let offline = looks_offline(&e) || is_keyring_locked(&e);
                 warn!(pair = %name, "ciclo falhou: {e:#}");
                 status.update(&name, |s| {
-                    s.state = if offline { PairState::Offline } else { PairState::Error };
+                    s.state = if offline {
+                        PairState::Offline
+                    } else {
+                        PairState::Error
+                    };
                     s.last_error = Some(format!("{e:#}"));
                     s.active.clear();
                 });
                 if !was_error && !offline {
-                    notify_desktop(&settings, "Erro de sincronização", &format!("{name}: {e:#}"));
+                    notify_desktop(
+                        &settings,
+                        "Erro de sincronização",
+                        &format!("{name}: {e:#}"),
+                    );
                 }
                 was_error = true;
                 backoff = (backoff * 2).clamp(Duration::from_secs(5), Duration::from_secs(300));
@@ -408,7 +484,11 @@ async fn pair_loop(
             continue;
         }
 
-        let wait = if was_error { backoff } else { Duration::from_secs(settings.poll_interval_secs) };
+        let wait = if was_error {
+            backoff
+        } else {
+            Duration::from_secs(settings.poll_interval_secs)
+        };
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
             Some(()) = ev_rx.recv() => {

@@ -115,7 +115,9 @@ impl DriveItem {
 }
 
 pub fn parse_time_ms(s: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp_millis())
 }
 
 pub fn format_time_ms(ms: i64) -> String {
@@ -126,7 +128,10 @@ pub fn format_time_ms(ms: i64) -> String {
 
 /// Converte um `driveItem` (não apagado) em [`RemoteItem`].
 pub fn to_remote(it: &DriveItem) -> Result<RemoteItem> {
-    let name = it.name.clone().with_context(|| format!("item {} sem nome", it.id))?;
+    let name = it
+        .name
+        .clone()
+        .with_context(|| format!("item {} sem nome", it.id))?;
     // Pacotes (blocos de anotações do OneNote etc.) e atalhos para itens de
     // outros drives (`remoteItem`) não têm conteúdo sincronizável aqui:
     // viram "nativos" e o motor os ignora.
@@ -137,7 +142,11 @@ pub fn to_remote(it: &DriveItem) -> Result<RemoteItem> {
         .as_ref()
         .and_then(|f| f.last_modified_date_time.as_deref())
         .and_then(parse_time_ms)
-        .or_else(|| it.last_modified_date_time.as_deref().and_then(parse_time_ms))
+        .or_else(|| {
+            it.last_modified_date_time
+                .as_deref()
+                .and_then(parse_time_ms)
+        })
         .unwrap_or(0);
     let hash = if is_dir {
         None
@@ -154,7 +163,11 @@ pub fn to_remote(it: &DriveItem) -> Result<RemoteItem> {
         is_dir,
         size: it.size.unwrap_or(0),
         mtime_ms,
-        rev: it.c_tag.clone().or_else(|| it.e_tag.clone()).unwrap_or_default(),
+        rev: it
+            .c_tag
+            .clone()
+            .or_else(|| it.e_tag.clone())
+            .unwrap_or_default(),
         hash,
         native,
     })
@@ -174,7 +187,11 @@ impl DeltaAccumulator {
             if it.is_root() {
                 continue;
             }
-            let entry = if it.is_deleted() { None } else { Some(to_remote(it)?) };
+            let entry = if it.is_deleted() {
+                None
+            } else {
+                Some(to_remote(it)?)
+            };
             if self.state.insert(it.id.clone(), entry).is_none() {
                 self.order.push(it.id.clone());
             }
@@ -183,7 +200,10 @@ impl DeltaAccumulator {
     }
 
     pub fn finish(mut self, cursor: String) -> ChangeBatch {
-        let mut batch = ChangeBatch { cursor, ..Default::default() };
+        let mut batch = ChangeBatch {
+            cursor,
+            ..Default::default()
+        };
         for id in self.order {
             match self.state.remove(&id) {
                 Some(Some(item)) => batch.upserts.push(item),
@@ -251,7 +271,9 @@ pub const MAX_PATH_CHARS: usize = 400;
 pub fn validate_path(path: &str) -> Result<(), String> {
     let total = path.encode_utf16().count();
     if total > MAX_PATH_CHARS {
-        return Err(format!("caminho com {total} caracteres; o OneDrive aceita até {MAX_PATH_CHARS}"));
+        return Err(format!(
+            "caminho com {total} caracteres; o OneDrive aceita até {MAX_PATH_CHARS}"
+        ));
     }
     for seg in path.split('/').filter(|s| !s.is_empty()) {
         validate_segment(seg)?;
@@ -260,28 +282,43 @@ pub fn validate_path(path: &str) -> Result<(), String> {
 }
 
 fn validate_segment(name: &str) -> Result<(), String> {
-    if let Some(c) = name.chars().find(|c| matches!(c, '"' | '*' | ':' | '<' | '>' | '?' | '\\' | '|')) {
-        return Err(format!("o OneDrive não aceita o caractere {c} em \"{name}\""));
+    if let Some(c) = name
+        .chars()
+        .find(|c| matches!(c, '"' | '*' | ':' | '<' | '>' | '?' | '\\' | '|'))
+    {
+        return Err(format!(
+            "o OneDrive não aceita o caractere {c} em \"{name}\""
+        ));
     }
     if name.chars().any(char::is_control) {
-        return Err(format!("o OneDrive não aceita caracteres de controle em \"{name}\""));
+        return Err(format!(
+            "o OneDrive não aceita caracteres de controle em \"{name}\""
+        ));
     }
     if name.starts_with(' ') || name.ends_with(' ') {
-        return Err(format!("o OneDrive não aceita espaço no início ou no fim de \"{name}\""));
+        return Err(format!(
+            "o OneDrive não aceita espaço no início ou no fim de \"{name}\""
+        ));
     }
     let lower = name.to_lowercase();
-    let reserved = matches!(lower.as_str(), "con" | "prn" | "aux" | "nul" | ".lock" | "desktop.ini")
-        || ((lower.starts_with("com") || lower.starts_with("lpt"))
-            && lower.len() == 4
-            && lower.as_bytes()[3].is_ascii_digit());
+    let reserved = matches!(
+        lower.as_str(),
+        "con" | "prn" | "aux" | "nul" | ".lock" | "desktop.ini"
+    ) || ((lower.starts_with("com") || lower.starts_with("lpt"))
+        && lower.len() == 4
+        && lower.as_bytes()[3].is_ascii_digit());
     if reserved {
         return Err(format!("\"{name}\" é um nome reservado no OneDrive"));
     }
     if lower.contains("_vti_") {
-        return Err(format!("o OneDrive não aceita \"_vti_\" no nome \"{name}\""));
+        return Err(format!(
+            "o OneDrive não aceita \"_vti_\" no nome \"{name}\""
+        ));
     }
     if name.starts_with("~$") {
-        return Err(format!("o OneDrive não aceita nomes começando com \"~$\" (\"{name}\")"));
+        return Err(format!(
+            "o OneDrive não aceita nomes começando com \"~$\" (\"{name}\")"
+        ));
     }
     Ok(())
 }
@@ -361,15 +398,23 @@ mod tests {
         .unwrap();
         let mut acc = DeltaAccumulator::default();
         acc.add_page(&page).unwrap();
-        let PageNext::Done(cursor) = page.next().unwrap() else { panic!() };
+        let PageNext::Done(cursor) = page.next().unwrap() else {
+            panic!()
+        };
         let b = acc.finish(cursor);
-        assert_eq!(b.upserts.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["A1"]);
+        assert_eq!(
+            b.upserts.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["A1"]
+        );
         assert_eq!(b.removed, ["D1", "A2"]);
         assert!(!b.reset);
         assert!(b.cursor.ends_with("token=abc"));
 
         let live = live_items(&page).unwrap();
-        assert_eq!(live.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["A1", "A2"]);
+        assert_eq!(
+            live.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ["A1", "A2"]
+        );
     }
 
     #[test]
@@ -422,8 +467,14 @@ mod tests {
 
     #[test]
     fn faixas_esperadas() {
-        assert_eq!(next_expected_start(&json!({"nextExpectedRanges": ["327680-"]})), Some(327680));
-        assert_eq!(next_expected_start(&json!({"nextExpectedRanges": ["10-20", "30-"]})), Some(10));
+        assert_eq!(
+            next_expected_start(&json!({"nextExpectedRanges": ["327680-"]})),
+            Some(327680)
+        );
+        assert_eq!(
+            next_expected_start(&json!({"nextExpectedRanges": ["10-20", "30-"]})),
+            Some(10)
+        );
         assert_eq!(next_expected_start(&json!({})), None);
     }
 
@@ -437,17 +488,50 @@ mod tests {
     #[test]
     fn nomes_recusados() {
         let err = validate_path("Docs/relatório: final.txt").unwrap_err();
-        assert!(err.contains(':') && err.contains("relatório: final.txt"), "{err}");
-        for bad in ["CON", "con", "Pasta/nul", "COM1", "lpt9", ".lock", "Desktop.ini", "a_vti_b",
-                    "~$planilha.xlsx", " espaço", "fim ", "a*b", "a?b", "a|b", "a<b", "a>b", "a\"b", "a\\b", "tab\tx"] {
+        assert!(
+            err.contains(':') && err.contains("relatório: final.txt"),
+            "{err}"
+        );
+        for bad in [
+            "CON",
+            "con",
+            "Pasta/nul",
+            "COM1",
+            "lpt9",
+            ".lock",
+            "Desktop.ini",
+            "a_vti_b",
+            "~$planilha.xlsx",
+            " espaço",
+            "fim ",
+            "a*b",
+            "a?b",
+            "a|b",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a\\b",
+            "tab\tx",
+        ] {
             assert!(validate_path(bad).is_err(), "{bad:?} deveria ser recusado");
         }
     }
 
     #[test]
     fn nomes_aceitos() {
-        for ok in ["", "relatório final.txt", "Docs/CON.txt", "console", "COM10", "COMx", "~arquivo",
-                   "a~$b", "ação #1 (cópia) [v2] {x} & y + z = 100% ; ok, 'aspas'.txt", ".gitignore", "a.lock"] {
+        for ok in [
+            "",
+            "relatório final.txt",
+            "Docs/CON.txt",
+            "console",
+            "COM10",
+            "COMx",
+            "~arquivo",
+            "a~$b",
+            "ação #1 (cópia) [v2] {x} & y + z = 100% ; ok, 'aspas'.txt",
+            ".gitignore",
+            "a.lock",
+        ] {
             assert_eq!(validate_path(ok), Ok(()), "{ok:?}");
         }
     }

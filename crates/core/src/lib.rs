@@ -4,8 +4,8 @@
 pub mod config;
 pub mod engine;
 pub mod hash;
-pub mod ignore;
 pub mod http;
+pub mod ignore;
 pub mod model;
 pub mod oauth;
 pub mod planner;
@@ -13,8 +13,8 @@ pub mod provider;
 pub mod scan;
 pub mod shortcut;
 pub mod state;
-pub mod token_store;
 pub mod status;
+pub mod token_store;
 pub mod trash;
 pub mod tree;
 

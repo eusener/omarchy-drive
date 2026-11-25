@@ -7,9 +7,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
+use omarchy_drive_core::hash::hash_bytes;
 use omarchy_drive_core::http::{self, HttpError};
 use omarchy_drive_core::oauth::{OAuthEndpoints, TokenManager};
-use omarchy_drive_core::hash::hash_bytes;
 use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem, shortcut};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -158,7 +158,9 @@ fn map_file(f: DriveFile) -> RemoteItem {
 }
 
 fn parse_mtime(t: Option<&str>) -> i64 {
-    t.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|t| t.timestamp_millis()).unwrap_or(0)
+    t.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| t.timestamp_millis())
+        .unwrap_or(0)
 }
 
 /// Escapa um literal para uso entre aspas simples na linguagem de busca `q`.
@@ -184,7 +186,9 @@ fn next_offset(range: Option<&str>) -> u64 {
 
 /// O erro indica cursor (`pageToken`) inválido ou expirado?
 fn is_invalid_cursor(e: &anyhow::Error) -> bool {
-    let Some(h) = e.downcast_ref::<HttpError>() else { return false };
+    let Some(h) = e.downcast_ref::<HttpError>() else {
+        return false;
+    };
     match h.status {
         StatusCode::NOT_FOUND | StatusCode::GONE => true,
         StatusCode::BAD_REQUEST => {
@@ -219,25 +223,39 @@ impl GDrive {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self { tokens, http: reqwest::Client::new(), upload_http, root_id: tokio::sync::OnceCell::new() }
+        Self {
+            tokens,
+            http: reqwest::Client::new(),
+            upload_http,
+            root_id: tokio::sync::OnceCell::new(),
+        }
     }
 
     /// E-mail da conta autorizada.
     pub async fn account_email(&self) -> Result<String> {
-        let a: About = self.get_json(&format!("{API}/about"), &[("fields", "user(emailAddress)")]).await?;
-        a.user.and_then(|u| u.email_address).context("a API não devolveu o e-mail da conta")
+        let a: About = self
+            .get_json(&format!("{API}/about"), &[("fields", "user(emailAddress)")])
+            .await?;
+        a.user
+            .and_then(|u| u.email_address)
+            .context("a API não devolveu o e-mail da conta")
     }
 
     async fn get_json<T: DeserializeOwned>(&self, url: &str, query: &[(&str, &str)]) -> Result<T> {
         let r = http::send(&self.tokens, || {
-            self.http.get(url).query(&[("supportsAllDrives", "true")]).query(query)
+            self.http
+                .get(url)
+                .query(&[("supportsAllDrives", "true")])
+                .query(query)
         })
         .await?;
         Ok(r.json().await?)
     }
 
     async fn get_file(&self, id: &str) -> Result<RemoteItem> {
-        let f: DriveFile = self.get_json(&format!("{API}/files/{id}"), &[("fields", FILE_FIELDS)]).await?;
+        let f: DriveFile = self
+            .get_json(&format!("{API}/files/{id}"), &[("fields", FILE_FIELDS)])
+            .await?;
         Ok(map_file(f))
     }
 
@@ -294,12 +312,17 @@ impl GDrive {
         existing_id: Option<&str>,
     ) -> Result<String> {
         let modified = rfc3339_ms(mtime_ms)?;
-        let query = [("uploadType", "resumable"), ("supportsAllDrives", "true"), ("fields", FILE_FIELDS)];
+        let query = [
+            ("uploadType", "resumable"),
+            ("supportsAllDrives", "true"),
+            ("fields", FILE_FIELDS),
+        ];
         let total_s = total.to_string();
         let resp = match existing_id {
             None => {
                 let url = format!("{UPLOAD_API}/files");
-                let body = json!({ "name": name, "parents": [parent_id], "modifiedTime": modified });
+                let body =
+                    json!({ "name": name, "parents": [parent_id], "modifiedTime": modified });
                 http::send(&self.tokens, || {
                     self.http
                         .post(&url)
@@ -343,7 +366,9 @@ impl GDrive {
         let token = self.tokens.access_token().await?;
         let req = self.upload_http.put(session).bearer_auth(token);
         let req = if total == 0 {
-            req.header("Content-Range", "bytes */0").header("Content-Length", "0").body(Vec::<u8>::new())
+            req.header("Content-Range", "bytes */0")
+                .header("Content-Length", "0")
+                .body(Vec::<u8>::new())
         } else if query_only {
             req.header("Content-Range", format!("bytes */{total}"))
                 .header("Content-Length", "0")
@@ -352,13 +377,22 @@ impl GDrive {
             let end = (offset + CHUNK).min(total);
             let mut buf = vec![0u8; (end - offset) as usize];
             file.seek(std::io::SeekFrom::Start(offset)).await?;
-            file.read_exact(&mut buf).await.context("arquivo encolheu durante o upload")?;
-            req.header("Content-Range", format!("bytes {offset}-{}/{total}", end - 1)).body(buf)
+            file.read_exact(&mut buf)
+                .await
+                .context("arquivo encolheu durante o upload")?;
+            req.header(
+                "Content-Range",
+                format!("bytes {offset}-{}/{total}", end - 1),
+            )
+            .body(buf)
         };
         Ok(req.send().await)
     }
 
-    async fn classify(&self, res: std::result::Result<reqwest::Response, reqwest::Error>) -> Result<UploadStep> {
+    async fn classify(
+        &self,
+        res: std::result::Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<UploadStep> {
         let r = match res {
             Ok(r) => r,
             Err(e) if e.is_connect() || e.is_timeout() || e.is_request() || e.is_body() => {
@@ -374,7 +408,10 @@ impl GDrive {
                 Ok(UploadStep::Done(map_file(f)))
             }
             308 => {
-                let range = r.headers().get(reqwest::header::RANGE).and_then(|v| v.to_str().ok());
+                let range = r
+                    .headers()
+                    .get(reqwest::header::RANGE)
+                    .and_then(|v| v.to_str().ok());
                 Ok(UploadStep::Resume(next_offset(range)))
             }
             401 => {
@@ -420,7 +457,9 @@ impl Provider for GDrive {
     }
 
     async fn start_cursor(&self, _root_id: &str) -> Result<String> {
-        let t: StartPageToken = self.get_json(&format!("{API}/changes/startPageToken"), &[]).await?;
+        let t: StartPageToken = self
+            .get_json(&format!("{API}/changes/startPageToken"), &[])
+            .await?;
         Ok(t.start_page_token)
     }
 
@@ -434,10 +473,11 @@ impl Provider for GDrive {
         let mut seen: HashSet<String> = HashSet::from([root_id.to_string()]);
         let mut level = vec![root_id.to_string()];
         while !level.is_empty() {
-            let results: Vec<Vec<RemoteItem>> = futures::stream::iter(level.drain(..).map(|id| self.list_children(id)))
-                .buffer_unordered(LIST_CONCURRENCY)
-                .try_collect()
-                .await?;
+            let results: Vec<Vec<RemoteItem>> =
+                futures::stream::iter(level.drain(..).map(|id| self.list_children(id)))
+                    .buffer_unordered(LIST_CONCURRENCY)
+                    .try_collect()
+                    .await?;
             for it in results.into_iter().flatten() {
                 if it.is_dir && seen.insert(it.id.clone()) {
                     level.push(it.id.clone());
@@ -449,7 +489,8 @@ impl Provider for GDrive {
     }
 
     async fn changes(&self, _root_id: &str, cursor: &str) -> Result<ChangeBatch> {
-        let fields = format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FILE_FIELDS}))");
+        let fields =
+            format!("nextPageToken,newStartPageToken,changes(fileId,removed,file({FILE_FIELDS}))");
         let mut batch = ChangeBatch::default();
         let mut page = cursor.to_string();
         loop {
@@ -465,7 +506,10 @@ impl Provider for GDrive {
                 Ok(l) => l,
                 Err(e) if is_invalid_cursor(&e) => {
                     warn!("cursor de mudanças inválido, relistando: {e}");
-                    return Ok(ChangeBatch { reset: true, ..Default::default() });
+                    return Ok(ChangeBatch {
+                        reset: true,
+                        ..Default::default()
+                    });
                 }
                 Err(e) => return Err(e),
             };
@@ -479,7 +523,9 @@ impl Provider for GDrive {
             if let Some(next) = l.next_page_token {
                 page = next;
             } else {
-                batch.cursor = l.new_start_page_token.context("changes.list sem newStartPageToken")?;
+                batch.cursor = l
+                    .new_start_page_token
+                    .context("changes.list sem newStartPageToken")?;
                 return Ok(batch);
             }
         }
@@ -493,7 +539,9 @@ impl Provider for GDrive {
         }
         let url = format!("{API}/files/{}", item.id);
         let resp = http::send(&self.tokens, || {
-            self.http.get(&url).query(&[("alt", "media"), ("supportsAllDrives", "true")])
+            self.http
+                .get(&url)
+                .query(&[("alt", "media"), ("supportsAllDrives", "true")])
         })
         .await?;
         let mut file = tokio::fs::File::create(dest).await?;
@@ -516,14 +564,18 @@ impl Provider for GDrive {
     ) -> Result<RemoteItem> {
         let mut file = tokio::fs::File::open(src).await?;
         let total = file.metadata().await?.len();
-        let session = self.start_session(parent_id, name, mtime_ms, total, existing_id).await?;
+        let session = self
+            .start_session(parent_id, name, mtime_ms, total, existing_id)
+            .await?;
 
         let mut offset = 0u64;
         let mut query_only = false;
         let mut retries = 0u32;
         let mut delay = Duration::from_secs(1);
         loop {
-            let res = self.put_chunk(&session, &mut file, offset, total, query_only).await?;
+            let res = self
+                .put_chunk(&session, &mut file, offset, total, query_only)
+                .await?;
             match self.classify(res).await? {
                 UploadStep::Done(item) => return Ok(item),
                 UploadStep::Resume(next) => {
@@ -573,7 +625,10 @@ impl Provider for GDrive {
     async fn move_item(&self, id: &str, new_parent_id: &str, new_name: &str) -> Result<RemoteItem> {
         let url = format!("{API}/files/{id}");
         let cur: ParentsOnly = self.get_json(&url, &[("fields", "parents")]).await?;
-        let mut query = vec![("supportsAllDrives", "true".to_string()), ("fields", FILE_FIELDS.to_string())];
+        let mut query = vec![
+            ("supportsAllDrives", "true".to_string()),
+            ("fields", FILE_FIELDS.to_string()),
+        ];
         if !cur.parents.iter().any(|p| p == new_parent_id) {
             query.push(("addParents", new_parent_id.to_string()));
             if !cur.parents.is_empty() {
@@ -581,7 +636,10 @@ impl Provider for GDrive {
             }
         }
         let body = json!({ "name": new_name });
-        let r = http::send(&self.tokens, || self.http.patch(&url).query(&query).json(&body)).await?;
+        let r = http::send(&self.tokens, || {
+            self.http.patch(&url).query(&query).json(&body)
+        })
+        .await?;
         Ok(map_file(r.json().await?))
     }
 
@@ -603,7 +661,12 @@ impl Provider for GDrive {
     }
 
     async fn quota(&self) -> Result<Quota> {
-        let a: About = self.get_json(&format!("{API}/about"), &[("fields", "storageQuota(limit,usage)")]).await?;
+        let a: About = self
+            .get_json(
+                &format!("{API}/about"),
+                &[("fields", "storageQuota(limit,usage)")],
+            )
+            .await?;
         let q = a.storage_quota.unwrap_or_default();
         Ok(Quota {
             used: q.usage.as_deref().and_then(|s| s.parse().ok()).unwrap_or(0),
@@ -677,7 +740,10 @@ mod tests {
     fn atalhos_por_tipo() {
         for (mime, name) in [
             ("application/vnd.google-apps.document", "Relatório.gdoc"),
-            ("application/vnd.google-apps.presentation", "Relatório.gslides"),
+            (
+                "application/vnd.google-apps.presentation",
+                "Relatório.gslides",
+            ),
             ("application/vnd.google-apps.jam", "Relatório.glink"),
         ] {
             let it = parse(json!({ "id": "D", "name": "Relatório", "mimeType": mime }));
@@ -688,7 +754,8 @@ mod tests {
 
     #[test]
     fn campos_ausentes() {
-        let it = parse(json!({ "id": "X", "name": "x.bin", "mimeType": "application/octet-stream" }));
+        let it =
+            parse(json!({ "id": "X", "name": "x.bin", "mimeType": "application/octet-stream" }));
         assert_eq!(it.parent_id, None);
         assert_eq!(it.size, 0);
         assert_eq!(it.mtime_ms, 0);
@@ -731,17 +798,31 @@ mod tests {
 
     #[test]
     fn cursor_invalido() {
-        let e: anyhow::Error = HttpError { status: StatusCode::GONE, body: String::new() }.into();
+        let e: anyhow::Error = HttpError {
+            status: StatusCode::GONE,
+            body: String::new(),
+        }
+        .into();
         assert!(is_invalid_cursor(&e));
-        let e: anyhow::Error =
-            HttpError { status: StatusCode::BAD_REQUEST, body: "Invalid Value: pageToken".into() }.into();
+        let e: anyhow::Error = HttpError {
+            status: StatusCode::BAD_REQUEST,
+            body: "Invalid Value: pageToken".into(),
+        }
+        .into();
         assert!(is_invalid_cursor(&e));
-        let e: anyhow::Error = HttpError { status: StatusCode::BAD_REQUEST, body: "outra coisa".into() }.into();
+        let e: anyhow::Error = HttpError {
+            status: StatusCode::BAD_REQUEST,
+            body: "outra coisa".into(),
+        }
+        .into();
         assert!(!is_invalid_cursor(&e));
     }
 
     #[test]
     fn mtime_rfc3339() {
-        assert_eq!(rfc3339_ms(1_704_164_645_678).unwrap(), "2024-01-02T03:04:05.678Z");
+        assert_eq!(
+            rfc3339_ms(1_704_164_645_678).unwrap(),
+            "2024-01-02T03:04:05.678Z"
+        );
     }
 }

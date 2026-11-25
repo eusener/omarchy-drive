@@ -37,7 +37,11 @@ impl Ignore {
     pub fn new(extra: &[String], include: &[String]) -> Result<Self> {
         let mut names = GlobSetBuilder::new();
         let mut paths = GlobSetBuilder::new();
-        for p in BUILTIN.iter().copied().chain(extra.iter().map(String::as_str)) {
+        for p in BUILTIN
+            .iter()
+            .copied()
+            .chain(extra.iter().map(String::as_str))
+        {
             if p.contains('/') {
                 paths.add(Glob::new(p.trim_start_matches('/'))?);
             } else {
@@ -47,7 +51,10 @@ impl Ignore {
         Ok(Self {
             names: names.build()?,
             paths: paths.build()?,
-            include: include.iter().map(|s| s.trim_matches('/').to_string()).collect(),
+            include: include
+                .iter()
+                .map(|s| s.trim_matches('/').to_string())
+                .collect(),
         })
     }
 
@@ -61,9 +68,7 @@ impl Ignore {
         // Mantém o caminho se estiver dentro de um include ou for ancestral
         // de um (para as pastas intermediárias existirem).
         !self.include.iter().any(|inc| {
-            rel == inc
-                || crate::model::is_under(rel, inc)
-                || crate::model::is_under(inc, rel)
+            rel == inc || crate::model::is_under(rel, inc) || crate::model::is_under(inc, rel)
         })
     }
 }

@@ -39,7 +39,11 @@ struct Resp {
 }
 
 fn json_resp(status: u16, body: impl Into<Vec<u8>>) -> Resp {
-    Resp { status, headers: vec![("Content-Type".into(), "application/json".into())], body: body.into() }
+    Resp {
+        status,
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: body.into(),
+    }
 }
 
 type Handler = Arc<dyn Fn(&Req) -> Resp + Send + Sync>;
@@ -77,7 +81,10 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Option<Req> {
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
         .collect();
-    let len: usize = headers.get("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let len: usize = headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut body = buf[head_end + 4..].to_vec();
     while body.len() < len {
         let n = sock.read(&mut tmp).await.ok()?;
@@ -86,7 +93,12 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Option<Req> {
         }
         body.extend_from_slice(&tmp[..n]);
     }
-    Some(Req { method, target, headers, body })
+    Some(Req {
+        method,
+        target,
+        headers,
+        body,
+    })
 }
 
 async fn serve(handler: Handler) -> Fake {
@@ -99,10 +111,16 @@ async fn serve(handler: Handler) -> Fake {
             let handler = handler.clone();
             let log = log2.clone();
             tokio::spawn(async move {
-                let Some(req) = read_request(&mut sock).await else { return };
+                let Some(req) = read_request(&mut sock).await else {
+                    return;
+                };
                 let resp = handler(&req);
                 log.lock().unwrap().push(req);
-                let mut out = format!("HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n", resp.status, resp.body.len());
+                let mut out = format!(
+                    "HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    resp.status,
+                    resp.body.len()
+                );
                 for (k, v) in &resp.headers {
                     out.push_str(&format!("{k}: {v}\r\n"));
                 }
@@ -119,7 +137,10 @@ async fn serve(handler: Handler) -> Fake {
 /// Fixture com `{GRAPH}` e `{RAW}` trocados pelos endereços dos servidores falsos.
 fn fixture(name: &str, graph: &str, raw: &str) -> String {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(path).unwrap().replace("{GRAPH}", graph).replace("{RAW}", raw)
+    std::fs::read_to_string(path)
+        .unwrap()
+        .replace("{GRAPH}", graph)
+        .replace("{RAW}", raw)
 }
 
 fn provider(graph: &str) -> OneDrive {
@@ -132,8 +153,15 @@ fn provider(graph: &str) -> OneDrive {
         redirect_host: "localhost".into(),
         extra_auth_params: vec![],
     };
-    let tokens = TokenSet { access_token: "TOKEN-TESTE".into(), refresh_token: "r".into(), expires_at: u64::MAX / 2 };
-    OneDrive::with_graph_url(TokenManager::new(ep, Arc::new(MemoryStore::new(tokens)), "teste"), &format!("{graph}/v1.0"))
+    let tokens = TokenSet {
+        access_token: "TOKEN-TESTE".into(),
+        refresh_token: "r".into(),
+        expires_at: u64::MAX / 2,
+    };
+    OneDrive::with_graph_url(
+        TokenManager::new(ep, Arc::new(MemoryStore::new(tokens)), "teste"),
+        &format!("{graph}/v1.0"),
+    )
 }
 
 /// Endereço do Graph falso: o servidor ouve em `url`, a API fica em `url/v1.0`.
@@ -152,8 +180,12 @@ async fn delta_segue_next_link_ate_o_delta_link() {
     let fake = serve(Arc::new(move |r: &Req| {
         let graph = g.lock().unwrap().clone();
         match r.target.as_str() {
-            t if t.ends_with("token=cursor-antigo") => json_resp(200, fixture("delta_page1.json", &graph, "")),
-            t if t.ends_with("token=pagina2") => json_resp(200, fixture("delta_page2.json", &graph, "")),
+            t if t.ends_with("token=cursor-antigo") => {
+                json_resp(200, fixture("delta_page1.json", &graph, ""))
+            }
+            t if t.ends_with("token=pagina2") => {
+                json_resp(200, fixture("delta_page2.json", &graph, ""))
+            }
             _ => json_resp(404, "{}"),
         }
     }))
@@ -166,7 +198,10 @@ async fn delta_segue_next_link_ate_o_delta_link() {
     let b = od.changes("ROOTID", &cursor).await.unwrap();
 
     assert!(!b.reset);
-    assert_eq!(b.cursor, format!("{graph}/me/drive/root/delta?token=cursor-novo"));
+    assert_eq!(
+        b.cursor,
+        format!("{graph}/me/drive/root/delta?token=cursor-novo")
+    );
     // Raiz fora; A1 aparece uma vez com o estado da última página.
     let ids: Vec<_> = b.upserts.iter().map(|i| i.id.as_str()).collect();
     assert_eq!(ids, ["F1", "A1", "N1"]);
@@ -188,34 +223,61 @@ async fn delta_segue_next_link_ate_o_delta_link() {
 
     let reqs = fake.requests();
     assert_eq!(reqs.len(), 2);
-    assert!(reqs.iter().all(|r| r.header("authorization") == Some("Bearer TOKEN-TESTE")));
+    assert!(
+        reqs.iter()
+            .all(|r| r.header("authorization") == Some("Bearer TOKEN-TESTE"))
+    );
 }
 
 #[tokio::test]
 async fn cursor_invalidado_com_410_vira_reset() {
-    let fake = serve(Arc::new(|_: &Req| json_resp(410, fixture("resync_required.json", "", "")))).await;
+    let fake = serve(Arc::new(|_: &Req| {
+        json_resp(410, fixture("resync_required.json", "", ""))
+    }))
+    .await;
     let od = provider(&fake.url);
     let cursor = format!("{}/me/drive/root/delta?token=velho", graph_base(&fake));
     let b = od.changes("ROOTID", &cursor).await.unwrap();
     assert!(b.reset);
     assert!(b.upserts.is_empty() && b.removed.is_empty());
-    assert!(b.cursor.is_empty(), "o cursor antigo não pode ser reaproveitado");
+    assert!(
+        b.cursor.is_empty(),
+        "o cursor antigo não pode ser reaproveitado"
+    );
     assert_eq!(fake.requests().len(), 1, "410 não deve ser repetido");
 }
 
 #[tokio::test]
 async fn resync_required_em_outro_status_tambem_vira_reset() {
-    let fake = serve(Arc::new(|_: &Req| json_resp(400, fixture("resync_required.json", "", "")))).await;
+    let fake = serve(Arc::new(|_: &Req| {
+        json_resp(400, fixture("resync_required.json", "", ""))
+    }))
+    .await;
     let od = provider(&fake.url);
-    let b = od.changes("ROOTID", &format!("{}/me/drive/root/delta?token=x", graph_base(&fake))).await.unwrap();
+    let b = od
+        .changes(
+            "ROOTID",
+            &format!("{}/me/drive/root/delta?token=x", graph_base(&fake)),
+        )
+        .await
+        .unwrap();
     assert!(b.reset);
 }
 
 #[tokio::test]
 async fn outro_erro_do_delta_nao_vira_reset() {
-    let fake = serve(Arc::new(|_: &Req| json_resp(403, r#"{"error":{"code":"accessDenied"}}"#))).await;
+    let fake = serve(Arc::new(|_: &Req| {
+        json_resp(403, r#"{"error":{"code":"accessDenied"}}"#)
+    }))
+    .await;
     let od = provider(&fake.url);
-    let e = od.changes("ROOTID", &format!("{}/me/drive/root/delta?token=x", graph_base(&fake))).await.unwrap_err();
+    let e = od
+        .changes(
+            "ROOTID",
+            &format!("{}/me/drive/root/delta?token=x", graph_base(&fake)),
+        )
+        .await
+        .unwrap_err();
     assert!(format!("{e:#}").contains("403"));
 }
 
@@ -284,9 +346,16 @@ async fn upload_de_20_mb_em_partes_com_retomada() {
     .await;
 
     let od = provider(&graph_fake.url);
-    let item = od.upload("F1", "grande.bin", &src, mtime_ms, None).await.unwrap();
+    let item = od
+        .upload("F1", "grande.bin", &src, mtime_ms, None)
+        .await
+        .unwrap();
 
-    assert_eq!(*received.lock().unwrap(), data, "conteúdo recebido difere do enviado");
+    assert_eq!(
+        *received.lock().unwrap(),
+        data,
+        "conteúdo recebido difere do enviado"
+    );
     assert_eq!(item.id, "U1");
     assert_eq!(item.size, total as u64);
     assert_eq!(item.hash.as_deref(), Some(local_hash.as_str()));
@@ -294,17 +363,30 @@ async fn upload_de_20_mb_em_partes_com_retomada() {
     // Criação da sessão: autenticada, no caminho do pai, com data e replace.
     let g = graph_fake.requests();
     assert_eq!(g.len(), 1, "sem PATCH extra quando a data já confere");
-    assert!(g[0].target.ends_with("/v1.0/me/drive/items/F1:/grande.bin:/createUploadSession"));
+    assert!(
+        g[0].target
+            .ends_with("/v1.0/me/drive/items/F1:/grande.bin:/createUploadSession")
+    );
     assert_eq!(g[0].header("authorization"), Some("Bearer TOKEN-TESTE"));
     let body: serde_json::Value = serde_json::from_slice(&g[0].body).unwrap();
     assert_eq!(body["item"]["@microsoft.graph.conflictBehavior"], "replace");
-    assert_eq!(body["item"]["fileSystemInfo"]["lastModifiedDateTime"], "2024-05-03T09:30:15.000Z");
+    assert_eq!(
+        body["item"]["fileSystemInfo"]["lastModifiedDateTime"],
+        "2024-05-03T09:30:15.000Z"
+    );
 
     // Pedaços: múltiplos de 320 KiB, sem token, com retomada após o 503.
     let r = raw.requests();
-    assert!(r.iter().all(|q| q.header("authorization").is_none()), "a URL da sessão não pode receber o token");
+    assert!(
+        r.iter().all(|q| q.header("authorization").is_none()),
+        "a URL da sessão não pode receber o token"
+    );
     assert!(r.iter().all(|q| q.target.starts_with("/up/sessao-1?")));
-    let puts: Vec<_> = r.iter().filter(|q| q.method == "PUT").map(|q| q.header("content-range").unwrap().to_string()).collect();
+    let puts: Vec<_> = r
+        .iter()
+        .filter(|q| q.method == "PUT")
+        .map(|q| q.header("content-range").unwrap().to_string())
+        .collect();
     let chunk = 10 * MIB;
     assert_eq!(
         puts,
@@ -315,7 +397,11 @@ async fn upload_de_20_mb_em_partes_com_retomada() {
             format!("bytes {}-{}/{total}", 2 * chunk, total - 1),
         ]
     );
-    assert_eq!(r.iter().filter(|q| q.method == "GET").count(), 1, "consulta a sessão uma vez após a falha");
+    assert_eq!(
+        r.iter().filter(|q| q.method == "GET").count(),
+        1,
+        "consulta a sessão uma vez após a falha"
+    );
 }
 
 #[tokio::test]
@@ -330,8 +416,10 @@ async fn upload_que_falha_cancela_a_sessao() {
     }))
     .await;
     let raw_url = raw.url.clone();
-    let graph_fake =
-        serve(Arc::new(move |_: &Req| json_resp(200, fixture("upload_session.json", "", &raw_url)))).await;
+    let graph_fake = serve(Arc::new(move |_: &Req| {
+        json_resp(200, fixture("upload_session.json", "", &raw_url))
+    }))
+    .await;
 
     let od = provider(&graph_fake.url);
     assert!(od.upload("F1", "x.bin", &src, 0, None).await.is_err());
@@ -359,7 +447,10 @@ async fn download_segue_o_redirecionamento_sem_token_e_confere_o_quickxor() {
         if r.target.ends_with("/items/A1/content") {
             Resp {
                 status: 302,
-                headers: vec![("Location".into(), format!("{cdn_url}/download/A1?tempauth=xyz"))],
+                headers: vec![(
+                    "Location".into(),
+                    format!("{cdn_url}/download/A1?tempauth=xyz"),
+                )],
                 body: vec![],
             }
         } else if r.target.contains("token=pagina2") {
@@ -373,7 +464,16 @@ async fn download_segue_o_redirecionamento_sem_token_e_confere_o_quickxor() {
 
     let od = provider(&graph_fake.url);
     // Item como veio do delta gravado.
-    let b = od.changes("ROOTID", &format!("{}/me/drive/root/delta?token=pagina2", graph_base(&graph_fake))).await.unwrap();
+    let b = od
+        .changes(
+            "ROOTID",
+            &format!(
+                "{}/me/drive/root/delta?token=pagina2",
+                graph_base(&graph_fake)
+            ),
+        )
+        .await
+        .unwrap();
     let a1 = b.upserts.into_iter().find(|i| i.id == "A1").unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -381,10 +481,16 @@ async fn download_segue_o_redirecionamento_sem_token_e_confere_o_quickxor() {
     od.download(&a1, &dest).await.unwrap();
 
     assert_eq!(std::fs::read(&dest).unwrap(), content);
-    assert_eq!(hash_file(HashKind::QuickXor, &dest).unwrap(), a1.hash.unwrap());
+    assert_eq!(
+        hash_file(HashKind::QuickXor, &dest).unwrap(),
+        a1.hash.unwrap()
+    );
     let c = cdn.requests();
     assert_eq!(c.len(), 1);
-    assert!(c[0].header("authorization").is_none(), "o token não pode ir para o host do download");
+    assert!(
+        c[0].header("authorization").is_none(),
+        "o token não pode ir para o host do download"
+    );
     assert!(c[0].target.ends_with("tempauth=xyz"));
 }
 
@@ -394,5 +500,8 @@ async fn quickxor_do_arquivo_vazio() {
     let p = dir.path().join("vazio");
     std::fs::write(&p, b"").unwrap();
     // Valor que o OneDrive informa para arquivos de 0 byte.
-    assert_eq!(hash_file(HashKind::QuickXor, &p).unwrap(), "AAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+    assert_eq!(
+        hash_file(HashKind::QuickXor, &p).unwrap(),
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    );
 }

@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use omarchy_drive_core::config::{Settings, SyncPair};
 use omarchy_drive_core::engine::PairEngine;
 use omarchy_drive_core::hash::hash_bytes;
-use omarchy_drive_core::state::State;
 use omarchy_drive_core::oauth::{AuthError, is_auth_expired};
+use omarchy_drive_core::state::State;
 use omarchy_drive_core::status::{PairState, StatusHub};
 use omarchy_drive_core::{ChangeBatch, HashKind, Provider, Quota, RemoteItem, shortcut};
 
@@ -79,7 +79,13 @@ impl MemProvider {
         Some(cur)
     }
 
-    fn new_item(inner: &mut Inner, parent: &str, name: &str, is_dir: bool, data: &[u8]) -> RemoteItem {
+    fn new_item(
+        inner: &mut Inner,
+        parent: &str,
+        name: &str,
+        is_dir: bool,
+        data: &[u8],
+    ) -> RemoteItem {
         inner.next_id += 1;
         let id = format!("id{}", inner.next_id);
         let item = RemoteItem {
@@ -93,7 +99,9 @@ impl MemProvider {
             hash: (!is_dir).then(|| hash_bytes(HashKind::Md5, data)),
             native: false,
         };
-        inner.items.insert(id.clone(), (item.clone(), data.to_vec()));
+        inner
+            .items
+            .insert(id.clone(), (item.clone(), data.to_vec()));
         Self::touch(inner, &id);
         item
     }
@@ -117,7 +125,11 @@ impl MemProvider {
                     Self::touch(&mut g, &id);
                 }
                 Some(id) => parent = id,
-                None => parent = Self::new_item(&mut g, &parent, seg, !last, if last { data } else { b"" }).id,
+                None => {
+                    parent =
+                        Self::new_item(&mut g, &parent, seg, !last, if last { data } else { b"" })
+                            .id
+                }
             }
         }
     }
@@ -152,7 +164,12 @@ impl MemProvider {
 
     fn remote_names(&self) -> Vec<String> {
         let g = self.inner.lock().unwrap();
-        let mut v: Vec<String> = g.items.values().filter(|(i, _)| i.id != "root").map(|(i, _)| i.name.clone()).collect();
+        let mut v: Vec<String> = g
+            .items
+            .values()
+            .filter(|(i, _)| i.id != "root")
+            .map(|(i, _)| i.name.clone())
+            .collect();
         v.sort();
         v
     }
@@ -180,7 +197,11 @@ impl Provider for MemProvider {
         let mut out = Vec::new();
         let mut stack = vec![root.to_string()];
         while let Some(cur) = stack.pop() {
-            for (i, _) in g.items.values().filter(|(i, _)| i.parent_id.as_deref() == Some(&cur)) {
+            for (i, _) in g
+                .items
+                .values()
+                .filter(|(i, _)| i.parent_id.as_deref() == Some(&cur))
+            {
                 stack.push(i.id.clone());
                 out.push(i.clone());
             }
@@ -189,15 +210,23 @@ impl Provider for MemProvider {
     }
     async fn changes(&self, _root: &str, cursor: &str) -> Result<ChangeBatch> {
         if self.auth_expired.load(Ordering::SeqCst) {
-            return Err(anyhow::Error::from(AuthError::Expired("Token has been expired or revoked.".into()))
-                .context("listando mudanças"));
+            return Err(anyhow::Error::from(AuthError::Expired(
+                "Token has been expired or revoked.".into(),
+            ))
+            .context("listando mudanças"));
         }
         if self.reset_next.swap(false, Ordering::SeqCst) {
-            return Ok(ChangeBatch { reset: true, ..Default::default() });
+            return Ok(ChangeBatch {
+                reset: true,
+                ..Default::default()
+            });
         }
         let g = self.inner.lock().unwrap();
         let from: usize = cursor.parse()?;
-        let mut b = ChangeBatch { cursor: g.log.len().to_string(), ..Default::default() };
+        let mut b = ChangeBatch {
+            cursor: g.log.len().to_string(),
+            ..Default::default()
+        };
         for id in &g.log[from..] {
             match g.items.get(id) {
                 Some((i, _)) => b.upserts.push(i.clone()),
@@ -217,7 +246,14 @@ impl Provider for MemProvider {
         std::fs::write(dest, data)?;
         Ok(())
     }
-    async fn upload(&self, parent: &str, name: &str, src: &Path, mtime_ms: i64, existing: Option<&str>) -> Result<RemoteItem> {
+    async fn upload(
+        &self,
+        parent: &str,
+        name: &str,
+        src: &Path,
+        mtime_ms: i64,
+        existing: Option<&str>,
+    ) -> Result<RemoteItem> {
         self.uploads.fetch_add(1, Ordering::SeqCst);
         let data = std::fs::read(src)?;
         let mut g = self.inner.lock().unwrap();
@@ -248,11 +284,16 @@ impl Provider for MemProvider {
     }
     async fn move_item(&self, id: &str, parent: &str, name: &str) -> Result<RemoteItem> {
         let mut g = self.inner.lock().unwrap();
-        let Some((it, _)) = g.items.get_mut(id) else { bail!("404") };
+        let Some((it, _)) = g.items.get_mut(id) else {
+            bail!("404")
+        };
         it.parent_id = Some(parent.into());
         if it.native {
             // O Drive guarda o nome sem extensão; o mapeamento devolve com ".gdoc".
-            assert!(!shortcut::is_shortcut_path(name), "nome com extensão enviado ao Drive: {name}");
+            assert!(
+                !shortcut::is_shortcut_path(name),
+                "nome com extensão enviado ao Drive: {name}"
+            );
             it.name = format!("{name}.gdoc");
         } else {
             it.name = name.into();
@@ -266,7 +307,12 @@ impl Provider for MemProvider {
         // Remove o item e a subárvore.
         let mut stack = vec![id.to_string()];
         while let Some(cur) = stack.pop() {
-            let kids: Vec<String> = g.items.values().filter(|(i, _)| i.parent_id.as_deref() == Some(&cur)).map(|(i, _)| i.id.clone()).collect();
+            let kids: Vec<String> = g
+                .items
+                .values()
+                .filter(|(i, _)| i.parent_id.as_deref() == Some(&cur))
+                .map(|(i, _)| i.id.clone())
+                .collect();
             stack.extend(kids);
             g.items.remove(&cur);
             Self::touch(&mut g, &cur);
@@ -274,7 +320,10 @@ impl Provider for MemProvider {
         Ok(())
     }
     async fn quota(&self) -> Result<Quota> {
-        Ok(Quota { used: 0, total: None })
+        Ok(Quota {
+            used: 0,
+            total: None,
+        })
     }
     fn validate_name(&self, path: &str) -> std::result::Result<(), String> {
         if self.strict_names.load(Ordering::SeqCst) && path.contains(':') {
@@ -295,7 +344,12 @@ fn write_local(root: &Path, rel: &str, data: &[u8]) {
     std::fs::write(&p, data).unwrap();
     let n = MTIME.fetch_add(1, Ordering::SeqCst);
     let t = SystemTime::now() - Duration::from_secs(3600) + Duration::from_secs(n as u64);
-    std::fs::File::options().write(true).open(&p).unwrap().set_modified(t).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
 }
 
 fn read_local(root: &Path, rel: &str) -> Option<Vec<u8>> {
@@ -326,7 +380,10 @@ fn env(max_deletes: usize) -> Env {
         full_scan_only: false,
         paused: false,
     };
-    let settings = Settings { max_deletes_without_confirm: max_deletes, ..Default::default() };
+    let settings = Settings {
+        max_deletes_without_confirm: max_deletes,
+        ..Default::default()
+    };
     let status = Arc::new(StatusHub::new(None));
     let engine = PairEngine::new(
         pair,
@@ -337,7 +394,13 @@ fn env(max_deletes: usize) -> Env {
     )
     .unwrap()
     .with_trash_dir(dir.path().join("Trash"));
-    Env { _dir: dir, root, mem, engine, status }
+    Env {
+        _dir: dir,
+        root,
+        mem,
+        engine,
+        status,
+    }
 }
 
 impl Env {
@@ -464,12 +527,13 @@ async fn deletes_propagate_to_trash() {
     e.settle().await;
 
     std::fs::remove_file(e.root.join("apagar-local.txt")).unwrap();
-    e.mem.trash(&{
-        let g = e.mem.inner.lock().unwrap();
-        MemProvider::find(&g, "apagar-remoto.txt").unwrap()
-    })
-    .await
-    .unwrap();
+    e.mem
+        .trash(&{
+            let g = e.mem.inner.lock().unwrap();
+            MemProvider::find(&g, "apagar-remoto.txt").unwrap()
+        })
+        .await
+        .unwrap();
     e.settle().await;
     assert!(e.mem.remote_read("apagar-local.txt").is_none());
     assert!(!e.root.join("apagar-remoto.txt").exists());
@@ -531,8 +595,16 @@ async fn documento_nativo_vira_atalho_sem_download() {
     e.mem.remote_native_doc("Relatório");
     e.settle().await;
     let local = read_local(&e.root, "Relatório.gdoc").expect("atalho criado");
-    assert!(shortcut::url_from(&local).unwrap().starts_with("https://docs.google.com/document/d/"));
-    assert_eq!(e.mem.downloads.load(Ordering::SeqCst), 0, "documento nativo não pode ser baixado");
+    assert!(
+        shortcut::url_from(&local)
+            .unwrap()
+            .starts_with("https://docs.google.com/document/d/")
+    );
+    assert_eq!(
+        e.mem.downloads.load(Ordering::SeqCst),
+        0,
+        "documento nativo não pode ser baixado"
+    );
 
     // Edição local do atalho: nada sobe, o conteúdo é restaurado.
     write_local(&e.root, "Relatório.gdoc", b"editado");
@@ -555,17 +627,27 @@ async fn documento_nativo_vira_atalho_sem_download() {
 #[tokio::test]
 async fn atalho_copiado_de_fora_nao_sobe() {
     let e = env(50);
-    write_local(&e.root, "Alheio.gdoc", &shortcut::content("ID-DE-OUTRA-CONTA", "Alheio.gdoc"));
+    write_local(
+        &e.root,
+        "Alheio.gdoc",
+        &shortcut::content("ID-DE-OUTRA-CONTA", "Alheio.gdoc"),
+    );
     e.settle().await;
     assert_eq!(e.mem.uploads.load(Ordering::SeqCst), 0);
-    assert!(e.status.snapshot().pairs["t"].warnings.iter().any(|w| w.contains("Alheio.gdoc")));
+    assert!(
+        e.status.snapshot().pairs["t"]
+            .warnings
+            .iter()
+            .any(|w| w.contains("Alheio.gdoc"))
+    );
 }
 
 #[tokio::test]
 async fn varredura_incremental_usa_so_os_caminhos_sujos() {
     use omarchy_drive_core::engine::ScanScope;
     use std::collections::HashSet;
-    let paths = |v: &[&str]| ScanScope::Paths(v.iter().map(|s| s.to_string()).collect::<HashSet<_>>());
+    let paths =
+        |v: &[&str]| ScanScope::Paths(v.iter().map(|s| s.to_string()).collect::<HashSet<_>>());
     let e = env(50);
     write_local(&e.root, "a.txt", b"A");
     e.settle().await; // primeira varredura: completa
@@ -577,7 +659,11 @@ async fn varredura_incremental_usa_so_os_caminhos_sujos() {
     assert!(e.mem.remote_read("sem-evento.txt").is_none());
 
     // Com o evento, sobe.
-    let r = e.engine.sync_scoped(false, paths(&["sem-evento.txt"])).await.unwrap();
+    let r = e
+        .engine
+        .sync_scoped(false, paths(&["sem-evento.txt"]))
+        .await
+        .unwrap();
     assert_eq!(r.executed, 1);
     assert_eq!(e.mem.remote_read("sem-evento.txt").unwrap(), b"S");
 
@@ -591,7 +677,10 @@ async fn varredura_incremental_usa_so_os_caminhos_sujos() {
 
     // Exclusão local com evento propaga; sem confirmação no disco não propagaria.
     std::fs::remove_file(e.root.join("a.txt")).unwrap();
-    e.engine.sync_scoped(false, paths(&["a.txt"])).await.unwrap();
+    e.engine
+        .sync_scoped(false, paths(&["a.txt"]))
+        .await
+        .unwrap();
     assert!(e.mem.remote_read("a.txt").is_none());
 
     // Uma completa depois de tudo não encontra diferença.
@@ -601,17 +690,29 @@ async fn varredura_incremental_usa_so_os_caminhos_sujos() {
 #[tokio::test]
 async fn cursor_invalidado_relista_sem_exclusoes_falsas() {
     let e = env(50);
-    for (p, d) in [("a.txt", "A"), ("Docs/b.txt", "B"), ("Docs/Sub/c.txt", "C"), ("vai-sumir.txt", "X")] {
+    for (p, d) in [
+        ("a.txt", "A"),
+        ("Docs/b.txt", "B"),
+        ("Docs/Sub/c.txt", "C"),
+        ("vai-sumir.txt", "X"),
+    ] {
         write_local(&e.root, p, d.as_bytes());
     }
     e.settle().await;
-    let (up, down) = (e.mem.uploads.load(Ordering::SeqCst), e.mem.downloads.load(Ordering::SeqCst));
+    let (up, down) = (
+        e.mem.uploads.load(Ordering::SeqCst),
+        e.mem.downloads.load(Ordering::SeqCst),
+    );
 
     // Cursor invalidado com a árvore inalterada: relista e não faz nada.
     let listings = e.mem.listings.load(Ordering::SeqCst);
     e.mem.reset_next.store(true, Ordering::SeqCst);
     let r = e.sync().await;
-    assert_eq!(e.mem.listings.load(Ordering::SeqCst), listings + 1, "deveria relistar o drive");
+    assert_eq!(
+        e.mem.listings.load(Ordering::SeqCst),
+        listings + 1,
+        "deveria relistar o drive"
+    );
     assert_eq!(r.executed, 0, "{r:?}");
     assert_eq!(e.mem.uploads.load(Ordering::SeqCst), up);
     assert_eq!(e.mem.downloads.load(Ordering::SeqCst), down);
@@ -623,7 +724,10 @@ async fn cursor_invalidado_relista_sem_exclusoes_falsas() {
     // só o que sumiu de verdade é apagado.
     e.mem.remote_write("novo.txt", b"N");
     {
-        let id = { let g = e.mem.inner.lock().unwrap(); MemProvider::find(&g, "vai-sumir.txt").unwrap() };
+        let id = {
+            let g = e.mem.inner.lock().unwrap();
+            MemProvider::find(&g, "vai-sumir.txt").unwrap()
+        };
         e.mem.trash(&id).await.unwrap();
     }
     e.mem.reset_next.store(true, Ordering::SeqCst);
@@ -648,15 +752,34 @@ async fn nome_recusado_pelo_provedor_vira_aviso() {
     write_local(&e.root, "ok.txt", b"O");
     e.settle().await;
     assert_eq!(e.mem.remote_names(), vec!["ok.txt".to_string()]);
-    assert_eq!(read_local(&e.root, "relatório: final.txt").unwrap(), b"R", "o arquivo local fica intacto");
+    assert_eq!(
+        read_local(&e.root, "relatório: final.txt").unwrap(),
+        b"R",
+        "o arquivo local fica intacto"
+    );
     let st = e.status.snapshot().pairs["t"].clone();
-    assert!(st.warnings.iter().any(|w| w.contains("relatório: final.txt")), "{:?}", st.warnings);
+    assert!(
+        st.warnings
+            .iter()
+            .any(|w| w.contains("relatório: final.txt")),
+        "{:?}",
+        st.warnings
+    );
     assert!(st.last_error.is_none());
     // Ciclos seguintes: nada a fazer, aviso mantido.
     assert_eq!(e.sync().await.executed, 0);
-    assert!(e.status.snapshot().pairs["t"].warnings.iter().any(|w| w.contains("relatório: final.txt")));
+    assert!(
+        e.status.snapshot().pairs["t"]
+            .warnings
+            .iter()
+            .any(|w| w.contains("relatório: final.txt"))
+    );
     // Renomeado para um nome aceito, sobe e o aviso some.
-    std::fs::rename(e.root.join("relatório: final.txt"), e.root.join("relatório final.txt")).unwrap();
+    std::fs::rename(
+        e.root.join("relatório: final.txt"),
+        e.root.join("relatório final.txt"),
+    )
+    .unwrap();
     e.settle().await;
     assert!(e.mem.remote_read("relatório final.txt").is_some());
     assert!(e.status.snapshot().pairs["t"].warnings.is_empty());

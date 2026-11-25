@@ -56,7 +56,8 @@ pub async fn send(
                 // Google sinaliza limite de taxa com 403 + rateLimitExceeded.
                 let rate_limited = status == StatusCode::TOO_MANY_REQUESTS
                     || (status == StatusCode::FORBIDDEN
-                        && (body.contains("rateLimitExceeded") || body.contains("userRateLimitExceeded")));
+                        && (body.contains("rateLimitExceeded")
+                            || body.contains("userRateLimitExceeded")));
                 if (rate_limited || status.is_server_error()) && attempt < 7 {
                     tokio::time::sleep(retry_after.unwrap_or(delay)).await;
                     delay = (delay * 2).min(Duration::from_secs(64));

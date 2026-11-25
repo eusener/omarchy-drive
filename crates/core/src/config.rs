@@ -126,7 +126,11 @@ impl Dirs {
             .map(Path::to_path_buf)
             .unwrap_or_else(std::env::temp_dir)
             .join("omarchy-drive");
-        Ok(Self { config, state, runtime })
+        Ok(Self {
+            config,
+            state,
+            runtime,
+        })
     }
 
     pub fn config_file(&self) -> PathBuf {
@@ -152,8 +156,8 @@ impl Config {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let s = std::fs::read_to_string(path)
-            .with_context(|| format!("lendo {}", path.display()))?;
+        let s =
+            std::fs::read_to_string(path).with_context(|| format!("lendo {}", path.display()))?;
         let mut cfg: Config =
             toml::from_str(&s).with_context(|| format!("config inválida: {}", path.display()))?;
         for p in &mut cfg.pairs {
@@ -182,9 +186,9 @@ impl Config {
 
     /// Conta já configurada do mesmo provedor com este e-mail.
     pub fn account_by_email(&self, provider: ProviderKind, email: &str) -> Option<&Account> {
-        self.accounts
-            .iter()
-            .find(|a| a.provider == provider && !a.label.is_empty() && a.label.eq_ignore_ascii_case(email))
+        self.accounts.iter().find(|a| {
+            a.provider == provider && !a.label.is_empty() && a.label.eq_ignore_ascii_case(email)
+        })
     }
 
     /// Nome único para uma conta nova, derivado do e-mail: a parte antes do
@@ -194,7 +198,10 @@ impl Config {
         if self.account(&base).is_none() {
             return base;
         }
-        (2..).map(|n| format!("{base}-{n}")).find(|n| self.account(n).is_none()).unwrap()
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|n| self.account(n).is_none())
+            .unwrap()
     }
 }
 
@@ -266,7 +273,13 @@ mod tests {
     #[test]
     fn conta_existente_pelo_email() {
         let c = cfg_with(&["joao"]);
-        assert!(c.account_by_email(ProviderKind::Gdrive, "JOAO@x.com").is_some());
-        assert!(c.account_by_email(ProviderKind::Onedrive, "joao@x.com").is_none());
+        assert!(
+            c.account_by_email(ProviderKind::Gdrive, "JOAO@x.com")
+                .is_some()
+        );
+        assert!(
+            c.account_by_email(ProviderKind::Onedrive, "joao@x.com")
+                .is_none()
+        );
     }
 }

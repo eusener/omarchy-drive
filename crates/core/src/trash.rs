@@ -23,7 +23,11 @@ pub fn trash(dir: &Path, path: &Path) -> Result<()> {
     let info = dir.join("info");
     std::fs::create_dir_all(&files)?;
     std::fs::create_dir_all(&info)?;
-    let name = path.file_name().context("caminho sem nome")?.to_string_lossy().to_string();
+    let name = path
+        .file_name()
+        .context("caminho sem nome")?
+        .to_string_lossy()
+        .to_string();
     let mut candidate = name.clone();
     let mut n = 1;
     while files.join(&candidate).exists() || info.join(format!("{candidate}.trashinfo")).exists() {
@@ -34,7 +38,10 @@ pub fn trash(dir: &Path, path: &Path) -> Result<()> {
     let when = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S");
     std::fs::write(
         info.join(format!("{candidate}.trashinfo")),
-        format!("[Trash Info]\nPath={}\nDeletionDate={when}\n", encode_path(&abs)),
+        format!(
+            "[Trash Info]\nPath={}\nDeletionDate={when}\n",
+            encode_path(&abs)
+        ),
     )?;
     if let Err(e) = std::fs::rename(&abs, files.join(&candidate)) {
         let _ = std::fs::remove_file(info.join(format!("{candidate}.trashinfo")));

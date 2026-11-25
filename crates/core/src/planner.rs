@@ -19,26 +19,50 @@ use crate::model::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// Aplica localmente um rename/move feito no remoto.
-    MoveLocal { from: RelPath, to: RelPath },
+    MoveLocal {
+        from: RelPath,
+        to: RelPath,
+    },
     /// Aplica no remoto um rename/move feito localmente.
-    MoveRemote { from: RelPath, to: RelPath },
-    CreateLocalDir { path: RelPath },
-    CreateRemoteDir { path: RelPath },
+    MoveRemote {
+        from: RelPath,
+        to: RelPath,
+    },
+    CreateLocalDir {
+        path: RelPath,
+    },
+    CreateRemoteDir {
+        path: RelPath,
+    },
     /// Remoto → local (arquivo novo ou modificado).
-    Download { path: RelPath },
+    Download {
+        path: RelPath,
+    },
     /// Local → remoto (arquivo novo ou modificado).
-    Upload { path: RelPath },
+    Upload {
+        path: RelPath,
+    },
     /// Os dois lados mudaram de formas diferentes: a cópia local é renomeada
     /// para um nome de conflito (e enviada), e a remota é baixada no lugar.
-    Conflict { path: RelPath },
+    Conflict {
+        path: RelPath,
+    },
     /// Os dois lados já estão iguais: apenas registra a base.
-    RecordBase { path: RelPath },
+    RecordBase {
+        path: RelPath,
+    },
     /// Envia para a lixeira local.
-    DeleteLocal { path: RelPath },
+    DeleteLocal {
+        path: RelPath,
+    },
     /// Envia para a lixeira do provedor.
-    DeleteRemote { path: RelPath },
+    DeleteRemote {
+        path: RelPath,
+    },
     /// Sumiu dos dois lados: esquece a base.
-    ForgetBase { path: RelPath },
+    ForgetBase {
+        path: RelPath,
+    },
 }
 
 impl Action {
@@ -88,10 +112,16 @@ impl Plan {
         self.actions.is_empty()
     }
     pub fn local_deletes(&self) -> usize {
-        self.actions.iter().filter(|a| matches!(a, Action::DeleteLocal { .. })).count()
+        self.actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteLocal { .. }))
+            .count()
     }
     pub fn remote_deletes(&self) -> usize {
-        self.actions.iter().filter(|a| matches!(a, Action::DeleteRemote { .. })).count()
+        self.actions
+            .iter()
+            .filter(|a| matches!(a, Action::DeleteRemote { .. }))
+            .count()
     }
 }
 
@@ -169,34 +199,58 @@ pub fn plan(snap: &Snapshot) -> Plan {
 /// Como [`plan`], recusando o que o provedor não aceita: `check` recebe o
 /// caminho relativo ao par e devolve o motivo da recusa.
 pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>) -> Plan {
-    let mut base: BTreeMap<RelPath, BaseEntry> =
-        snap.base.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let mut local: BTreeMap<RelPath, LocalEntry> =
-        snap.local.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let mut remote: BTreeMap<RelPath, RemoteEntry> =
-        snap.remote.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut base: BTreeMap<RelPath, BaseEntry> = snap
+        .base
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let mut local: BTreeMap<RelPath, LocalEntry> = snap
+        .local
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let mut remote: BTreeMap<RelPath, RemoteEntry> = snap
+        .remote
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     let mut actions: Vec<Action> = Vec::new();
 
     // ---- 1. Movimentações remotas (mesmo id, caminho diferente) ----
-    let remote_by_id: HashMap<String, RelPath> =
-        remote.iter().map(|(p, r)| (r.item.id.clone(), p.clone())).collect();
-    let mut ids: Vec<(usize, String)> =
-        base.values().map(|b| (depth(&b.path), b.remote_id.clone())).collect();
+    let remote_by_id: HashMap<String, RelPath> = remote
+        .iter()
+        .map(|(p, r)| (r.item.id.clone(), p.clone()))
+        .collect();
+    let mut ids: Vec<(usize, String)> = base
+        .values()
+        .map(|b| (depth(&b.path), b.remote_id.clone()))
+        .collect();
     ids.sort();
-    let mut base_by_id: HashMap<String, RelPath> =
-        base.iter().map(|(p, b)| (b.remote_id.clone(), p.clone())).collect();
+    let mut base_by_id: HashMap<String, RelPath> = base
+        .iter()
+        .map(|(p, b)| (b.remote_id.clone(), p.clone()))
+        .collect();
     for (_, id) in &ids {
-        let Some(cur) = base_by_id.get(id).cloned() else { continue };
-        let Some(target) = remote_by_id.get(id) else { continue };
+        let Some(cur) = base_by_id.get(id).cloned() else {
+            continue;
+        };
+        let Some(target) = remote_by_id.get(id) else {
+            continue;
+        };
         if *target == cur
             || base.contains_key(target)
             || local.contains_key(target)
-            || !local.get(&cur).is_some_and(|l| l.is_dir == base[&cur].is_dir)
+            || !local
+                .get(&cur)
+                .is_some_and(|l| l.is_dir == base[&cur].is_dir)
         {
             continue;
         }
-        actions.push(Action::MoveLocal { from: cur.clone(), to: target.clone() });
+        actions.push(Action::MoveLocal {
+            from: cur.clone(),
+            to: target.clone(),
+        });
         relocate(&mut base, &cur, target, |b, p| {
             b.path = p.to_string();
             base_by_id.insert(b.remote_id.clone(), p.to_string());
@@ -214,11 +268,15 @@ pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>)
     paths.sort_by_key(|p| depth(p));
     for orig in paths {
         // A entrada pode já ter sido realocada junto com a pasta pai.
-        let Some(b) = base.get(&orig).cloned() else { continue };
+        let Some(b) = base.get(&orig).cloned() else {
+            continue;
+        };
         if local.contains_key(&orig) || b.inode == 0 {
             continue;
         }
-        let Some(target) = local_new_by_inode.get(&b.inode) else { continue };
+        let Some(target) = local_new_by_inode.get(&b.inode) else {
+            continue;
+        };
         if base.contains_key(target) || remote.contains_key(target) {
             continue;
         }
@@ -239,13 +297,20 @@ pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>)
                 continue;
             }
         }
-        actions.push(Action::MoveRemote { from: orig.clone(), to: target.clone() });
+        actions.push(Action::MoveRemote {
+            from: orig.clone(),
+            to: target.clone(),
+        });
         relocate(&mut base, &orig, target, |b, p| b.path = p.to_string());
         relocate(&mut remote, &orig, target, |r, p| r.path = p.to_string());
     }
 
     // ---- 3. Decisão caminho a caminho ----
-    let mut all: Vec<&RelPath> = base.keys().chain(local.keys()).chain(remote.keys()).collect();
+    let mut all: Vec<&RelPath> = base
+        .keys()
+        .chain(local.keys())
+        .chain(remote.keys())
+        .collect();
     all.sort();
     all.dedup();
 
@@ -289,13 +354,11 @@ pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>)
                         }
                         (true, false) => Some(Action::Upload { path: p }),
                         (false, true) => Some(Action::Download { path: p }),
-                        (true, true) => Some(
-                            if l.is_dir == r.item.is_dir && same_content(l, r) {
-                                Action::RecordBase { path: p }
-                            } else {
-                                Action::Conflict { path: p }
-                            },
-                        ),
+                        (true, true) => Some(if l.is_dir == r.item.is_dir && same_content(l, r) {
+                            Action::RecordBase { path: p }
+                        } else {
+                            Action::Conflict { path: p }
+                        }),
                     }
                 }
             }
@@ -337,7 +400,9 @@ pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>)
                 *a = Action::Download { path };
                 true
             }
-            Action::Upload { .. } if crate::shortcut::is_shortcut_path(&path) && !remote.contains_key(&path) => {
+            Action::Upload { .. }
+                if crate::shortcut::is_shortcut_path(&path) && !remote.contains_key(&path) =>
+            {
                 if base.contains_key(&path) {
                     // O documento foi apagado no Drive: o atalho editado vai junto.
                     *a = Action::DeleteLocal { path };
@@ -440,19 +505,29 @@ pub fn plan_checked(snap: &Snapshot, check: impl Fn(&str) -> Result<(), String>)
         if moved_away.iter().any(|m| path == m || is_under(path, m)) {
             return false;
         }
-        !(matches!(a, Action::Upload { .. } | Action::CreateRemoteDir { .. }) && reject(path, &mut rejected))
+        !(matches!(a, Action::Upload { .. } | Action::CreateRemoteDir { .. })
+            && reject(path, &mut rejected))
     });
 
     // ---- 5. Ordenação ----
     per_path.sort_by(|a, b| {
         a.phase().cmp(&b.phase()).then_with(|| match a.phase() {
             // Exclusões: mais profundas primeiro.
-            3 => depth(b.path()).cmp(&depth(a.path())).then(a.path().cmp(b.path())),
-            _ => depth(a.path()).cmp(&depth(b.path())).then(a.path().cmp(b.path())),
+            3 => depth(b.path())
+                .cmp(&depth(a.path()))
+                .then(a.path().cmp(b.path())),
+            _ => depth(a.path())
+                .cmp(&depth(b.path()))
+                .then(a.path().cmp(b.path())),
         })
     });
     actions.extend(per_path);
-    Plan { actions, local: local.into_iter().collect(), remote: remote.into_iter().collect(), warnings }
+    Plan {
+        actions,
+        local: local.into_iter().collect(),
+        remote: remote.into_iter().collect(),
+        warnings,
+    }
 }
 
 #[cfg(test)]
@@ -485,7 +560,14 @@ mod tests {
     }
     /// Arquivo local não modificado em relação a `base_file`.
     fn local_same(path: &str, inode: u64) -> LocalEntry {
-        LocalEntry { path: path.into(), is_dir: false, size: 10, mtime_ns: 100, inode, hash: None }
+        LocalEntry {
+            path: path.into(),
+            is_dir: false,
+            size: 10,
+            mtime_ns: 100,
+            inode,
+            hash: None,
+        }
     }
     fn local_mod(path: &str, inode: u64, hash: &str) -> LocalEntry {
         LocalEntry {
@@ -498,7 +580,14 @@ mod tests {
         }
     }
     fn local_dir(path: &str, inode: u64) -> LocalEntry {
-        LocalEntry { path: path.into(), is_dir: true, size: 0, mtime_ns: 5, inode, hash: None }
+        LocalEntry {
+            path: path.into(),
+            is_dir: true,
+            size: 0,
+            mtime_ns: 5,
+            inode,
+            hash: None,
+        }
     }
     fn remote_file(path: &str, id: &str, hash: &str) -> RemoteEntry {
         let (parent, name) = (parent_of(path).unwrap_or(""), name_of(path));
@@ -571,13 +660,26 @@ mod tests {
             vec![],
         );
         let p = plan_checked(&s, strict);
-        assert_eq!(p.actions, vec![Action::Upload { path: "ok.txt".into() }]);
+        assert_eq!(
+            p.actions,
+            vec![Action::Upload {
+                path: "ok.txt".into()
+            }]
+        );
         assert_eq!(p.warnings.len(), 4, "{:?}", p.warnings);
-        for name in ["relatório: final.txt", "CON", "nome-de-arquivo-comprido.txt"] {
+        for name in [
+            "relatório: final.txt",
+            "CON",
+            "nome-de-arquivo-comprido.txt",
+        ] {
             assert!(p.warnings.iter().any(|w| w.contains(name)), "{name}");
         }
         // Um aviso só para a pasta recusada, não um por arquivo dentro dela.
-        assert!(p.warnings.iter().any(|w| w.starts_with("não enviado: pasta:x (")));
+        assert!(
+            p.warnings
+                .iter()
+                .any(|w| w.starts_with("não enviado: pasta:x ("))
+        );
         // Sem validação, tudo sobe.
         assert_eq!(plan(&s).actions.len(), 7);
     }
@@ -603,7 +705,12 @@ mod tests {
             vec![local_mod("R.gdoc", 1, "editado")],
             vec![native(remote_file("R.gdoc", "D", "h"))],
         );
-        assert_eq!(acts(s), vec![Action::Download { path: "R.gdoc".into() }]);
+        assert_eq!(
+            acts(s),
+            vec![Action::Download {
+                path: "R.gdoc".into()
+            }]
+        );
     }
 
     #[test]
@@ -611,8 +718,17 @@ mod tests {
         let mut r = native(remote_file("R.gdoc", "D", "h"));
         r.item.rev = "rev-novo".into();
         r.item.hash = Some("h2".into());
-        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![local_mod("R.gdoc", 1, "editado")], vec![r]);
-        assert_eq!(acts(s), vec![Action::Download { path: "R.gdoc".into() }]);
+        let s = snap(
+            vec![base_file("R.gdoc", "D", "h", 1)],
+            vec![local_mod("R.gdoc", 1, "editado")],
+            vec![r],
+        );
+        assert_eq!(
+            acts(s),
+            vec![Action::Download {
+                path: "R.gdoc".into()
+            }]
+        );
     }
 
     #[test]
@@ -622,23 +738,51 @@ mod tests {
             vec![local_same("Final.gdoc", 7)],
             vec![native(remote_file("R.gdoc", "D", "h"))],
         );
-        assert_eq!(acts(s), vec![Action::MoveRemote { from: "R.gdoc".into(), to: "Final.gdoc".into() }]);
+        assert_eq!(
+            acts(s),
+            vec![Action::MoveRemote {
+                from: "R.gdoc".into(),
+                to: "Final.gdoc".into()
+            }]
+        );
     }
 
     #[test]
     fn atalho_apagado_localmente_vai_para_a_lixeira() {
-        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![], vec![native(remote_file("R.gdoc", "D", "h"))]);
-        assert_eq!(acts(s), vec![Action::DeleteRemote { path: "R.gdoc".into() }]);
+        let s = snap(
+            vec![base_file("R.gdoc", "D", "h", 1)],
+            vec![],
+            vec![native(remote_file("R.gdoc", "D", "h"))],
+        );
+        assert_eq!(
+            acts(s),
+            vec![Action::DeleteRemote {
+                path: "R.gdoc".into()
+            }]
+        );
     }
 
     #[test]
     fn atalho_sem_documento_remoto_e_ignorado() {
-        let p = plan(&snap(vec![], vec![local_mod("Copiado.gdoc", 3, "x")], vec![]));
+        let p = plan(&snap(
+            vec![],
+            vec![local_mod("Copiado.gdoc", 3, "x")],
+            vec![],
+        ));
         assert!(p.actions.is_empty());
         assert_eq!(p.warnings.len(), 1);
         // Documento apagado no Drive e atalho editado: o atalho vai junto.
-        let s = snap(vec![base_file("R.gdoc", "D", "h", 1)], vec![local_mod("R.gdoc", 1, "editado")], vec![]);
-        assert_eq!(acts(s), vec![Action::DeleteLocal { path: "R.gdoc".into() }]);
+        let s = snap(
+            vec![base_file("R.gdoc", "D", "h", 1)],
+            vec![local_mod("R.gdoc", 1, "editado")],
+            vec![],
+        );
+        assert_eq!(
+            acts(s),
+            vec![Action::DeleteLocal {
+                path: "R.gdoc".into()
+            }]
+        );
     }
 
     #[test]
@@ -658,7 +802,14 @@ mod tests {
         let s = snap(vec![], vec![l], vec![remote_file("down.txt", "D", "h2")]);
         assert_eq!(
             acts(s),
-            vec![Action::Download { path: "down.txt".into() }, Action::Upload { path: "up.txt".into() }]
+            vec![
+                Action::Download {
+                    path: "down.txt".into()
+                },
+                Action::Upload {
+                    path: "up.txt".into()
+                }
+            ]
         );
     }
 
@@ -671,7 +822,10 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::Upload { path: "a".into() }, Action::Download { path: "b".into() }]
+            vec![
+                Action::Upload { path: "a".into() },
+                Action::Download { path: "b".into() }
+            ]
         );
     }
 
@@ -679,7 +833,11 @@ mod tests {
     fn touch_without_content_change_only_records_base() {
         let mut l = local_mod("a", 1, "h1");
         l.size = 10;
-        let s = snap(vec![base_file("a", "A", "h1", 1)], vec![l], vec![remote_file("a", "A", "h1")]);
+        let s = snap(
+            vec![base_file("a", "A", "h1", 1)],
+            vec![l],
+            vec![remote_file("a", "A", "h1")],
+        );
         assert_eq!(acts(s), vec![Action::RecordBase { path: "a".into() }]);
     }
 
@@ -692,13 +850,20 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::Conflict { path: "a".into() }, Action::RecordBase { path: "b".into() }]
+            vec![
+                Action::Conflict { path: "a".into() },
+                Action::RecordBase { path: "b".into() }
+            ]
         );
     }
 
     #[test]
     fn new_on_both_sides_with_different_content_is_conflict() {
-        let s = snap(vec![], vec![local_mod("a", 1, "x")], vec![remote_file("a", "A", "y")]);
+        let s = snap(
+            vec![],
+            vec![local_mod("a", 1, "x")],
+            vec![remote_file("a", "A", "y")],
+        );
         assert_eq!(acts(s), vec![Action::Conflict { path: "a".into() }]);
     }
 
@@ -711,7 +876,10 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::DeleteRemote { path: "a".into() }, Action::DeleteLocal { path: "b".into() }]
+            vec![
+                Action::DeleteRemote { path: "a".into() },
+                Action::DeleteLocal { path: "b".into() }
+            ]
         );
     }
 
@@ -724,7 +892,10 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::Download { path: "a".into() }, Action::Upload { path: "b".into() }]
+            vec![
+                Action::Download { path: "a".into() },
+                Action::Upload { path: "b".into() }
+            ]
         );
     }
 
@@ -737,7 +908,10 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::MoveLocal { from: "old.txt".into(), to: "new.txt".into() }]
+            vec![Action::MoveLocal {
+                from: "old.txt".into(),
+                to: "new.txt".into()
+            }]
         );
     }
 
@@ -748,7 +922,13 @@ mod tests {
             vec![local_dir("D", 10), local_same("D/x", 11)],
             vec![remote_dir("E", "DD"), remote_file("E/x", "X", "h")],
         );
-        assert_eq!(acts(s), vec![Action::MoveLocal { from: "D".into(), to: "E".into() }]);
+        assert_eq!(
+            acts(s),
+            vec![Action::MoveLocal {
+                from: "D".into(),
+                to: "E".into()
+            }]
+        );
     }
 
     #[test]
@@ -762,7 +942,10 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::MoveRemote { from: "old.txt".into(), to: "new.txt".into() }]
+            vec![Action::MoveRemote {
+                from: "old.txt".into(),
+                to: "new.txt".into()
+            }]
         );
     }
 
@@ -775,7 +958,13 @@ mod tests {
             vec![local_dir("E", 10), x],
             vec![remote_dir("D", "DD"), remote_file("D/x", "X", "h")],
         );
-        assert_eq!(acts(s), vec![Action::MoveRemote { from: "D".into(), to: "E".into() }]);
+        assert_eq!(
+            acts(s),
+            vec![Action::MoveRemote {
+                from: "D".into(),
+                to: "E".into()
+            }]
+        );
     }
 
     #[test]
@@ -787,16 +976,29 @@ mod tests {
         );
         assert_eq!(
             acts(s),
-            vec![Action::Upload { path: "other".into() }, Action::DeleteRemote { path: "old".into() }]
+            vec![
+                Action::Upload {
+                    path: "other".into()
+                },
+                Action::DeleteRemote { path: "old".into() }
+            ]
         );
     }
 
     #[test]
     fn deleted_dir_collapses_to_single_delete() {
         let s = snap(
-            vec![base_dir("D", "DD", 10), base_file("D/x", "X", "h", 11), base_file("D/y", "Y", "h", 12)],
+            vec![
+                base_dir("D", "DD", 10),
+                base_file("D/x", "X", "h", 11),
+                base_file("D/y", "Y", "h", 12),
+            ],
             vec![],
-            vec![remote_dir("D", "DD"), remote_file("D/x", "X", "h"), remote_file("D/y", "Y", "h")],
+            vec![
+                remote_dir("D", "DD"),
+                remote_file("D/x", "X", "h"),
+                remote_file("D/y", "Y", "h"),
+            ],
         );
         assert_eq!(acts(s), vec![Action::DeleteRemote { path: "D".into() }]);
     }
@@ -804,9 +1006,17 @@ mod tests {
     #[test]
     fn deleted_dir_with_remote_edit_inside_is_restored() {
         let s = snap(
-            vec![base_dir("D", "DD", 10), base_file("D/x", "X", "h", 11), base_file("D/y", "Y", "h", 12)],
+            vec![
+                base_dir("D", "DD", 10),
+                base_file("D/x", "X", "h", 11),
+                base_file("D/y", "Y", "h", 12),
+            ],
             vec![],
-            vec![remote_dir("D", "DD"), remote_file("D/x", "X", "h2"), remote_file("D/y", "Y", "h")],
+            vec![
+                remote_dir("D", "DD"),
+                remote_file("D/x", "X", "h2"),
+                remote_file("D/y", "Y", "h"),
+            ],
         );
         assert_eq!(
             acts(s),
@@ -831,7 +1041,9 @@ mod tests {
             acts(s),
             vec![
                 Action::CreateRemoteDir { path: "D".into() },
-                Action::Upload { path: "D/new".into() },
+                Action::Upload {
+                    path: "D/new".into()
+                },
                 Action::DeleteLocal { path: "D/x".into() },
             ]
         );
@@ -841,13 +1053,19 @@ mod tests {
     fn dirs_created_before_contents() {
         let mut f = local_mod("A/B/f", 3, "h");
         f.hash = Some("h".into());
-        let s = snap(vec![], vec![f, local_dir("A/B", 2), local_dir("A", 1)], vec![]);
+        let s = snap(
+            vec![],
+            vec![f, local_dir("A/B", 2), local_dir("A", 1)],
+            vec![],
+        );
         assert_eq!(
             acts(s),
             vec![
                 Action::CreateRemoteDir { path: "A".into() },
                 Action::CreateRemoteDir { path: "A/B".into() },
-                Action::Upload { path: "A/B/f".into() },
+                Action::Upload {
+                    path: "A/B/f".into()
+                },
             ]
         );
     }
